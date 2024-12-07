@@ -93,6 +93,13 @@ pub struct Model {
 }
 
 impl Model {
+    pub fn clone_with_device(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        Self {
+            meshes: self.meshes.iter().map(|mesh| mesh.clone_with_device(device, queue)).collect(),
+            materials: self.materials.iter().map(|material| material.clone_with_device(device)).collect(),
+        }
+    }
+
     pub fn load<P: AsRef<Path>>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -209,14 +216,14 @@ impl Model {
                 let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Mesh Vertex Buffer"),
                     contents: bytemuck::cast_slice(&vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC,
                 });
 
                 // Create index buffer
                 let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Mesh Index Buffer"),
                     contents: bytemuck::cast_slice(&indices),
-                    usage: wgpu::BufferUsages::INDEX,
+                    usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_SRC,
                 });
 
                 // Create mesh
@@ -345,13 +352,13 @@ impl Model {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Mesh Vertex Buffer"),
             contents: bytemuck::cast_slice(&obj_data.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC,
         });
 
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Mesh Index Buffer"),
             contents: bytemuck::cast_slice(&obj_data.indices),
-            usage: wgpu::BufferUsages::INDEX,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_SRC,
         });
 
         let mesh = Mesh {

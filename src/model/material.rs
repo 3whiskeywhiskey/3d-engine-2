@@ -8,19 +8,34 @@ pub struct Material {
 }
 
 impl Material {
+    pub fn clone_with_device(&self, device: &wgpu::Device) -> Self {
+        let diffuse_texture = self.diffuse_texture.as_ref().map(|texture| {
+            texture.clone_with_device(device)
+        });
+
+        let mut material = Self {
+            name: self.name.clone(),
+            diffuse_texture,
+            bind_group: None,
+            bind_group_layout: None,
+        };
+
+        material.create_bind_group(device);
+        material
+    }
+
     pub fn create_bind_group(&mut self, device: &wgpu::Device) {
-        if self.diffuse_texture.is_some() && self.bind_group.is_none() {
-            let texture = self.diffuse_texture.as_ref().unwrap();
-            
+        if let Some(texture) = &self.diffuse_texture {
             let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("texture_bind_group_layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
                         },
                         count: None,
                     },
@@ -31,10 +46,10 @@ impl Material {
                         count: None,
                     },
                 ],
-                label: Some("texture_bind_group_layout"),
             });
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("diffuse_bind_group"),
                 layout: &bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -44,9 +59,8 @@ impl Material {
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::Sampler(&texture.sampler),
-                    }
+                    },
                 ],
-                label: Some("diffuse_bind_group"),
             });
 
             self.bind_group = Some(bind_group);

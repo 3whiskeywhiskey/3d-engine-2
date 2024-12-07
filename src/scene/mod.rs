@@ -134,4 +134,13 @@ impl Scene {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.camera.aspect = width as f32 / height as f32;
     }
+
+    pub fn set_ambient_light(&mut self, intensity: f32) {
+        self.ambient_light = Vec3::splat(intensity.clamp(0.0, 1.0));
+    }
+
+    pub fn set_directional_light(&mut self, color: Vec3, direction: Vec3) {
+        self.directional_light = color.clamp(Vec3::ZERO, Vec3::ONE);
+        self.light_direction = direction.normalize();
+    }
 } 

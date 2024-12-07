@@ -9,6 +9,7 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
 };
 use std::path::Path;
+use glam::Vec3;
 
 const MOVE_SPEED: f32 = 0.1;
 const MOUSE_SPEED: f32 = 0.005;
@@ -79,16 +80,58 @@ async fn run() {
 
     let mut renderer = Renderer::new(&device, &config);
 
-    // Load the cube model
-    let model = Model::load(
+    // Load the models
+    let model1 = Model::load(
         &device,
         &queue,
-        Path::new("tests/models/cube.obj"),
-    ).expect("Failed to load model");
+        Path::new("assets/8b16ddeb-f011-4f13-bab7-615edd40aee9.glb"),
+    ).expect("Failed to load model 1");
 
-    // Add the cube to the scene
-    let transform = Transform::new();
-    scene.add_object(model, transform);
+    let model2 = Model::load(
+        &device,
+        &queue,
+        Path::new("assets/cb088356-1d69-41a5-b46d-4bc22aafa1b7.glb"),
+    ).expect("Failed to load model 2");
+
+    // Add multiple instances of each model with different transforms
+    let positions = [
+        Vec3::new(-3.0, 0.0, -3.0),
+        Vec3::new(3.0, 0.0, -3.0),
+        Vec3::new(-3.0, 0.0, 3.0),
+        Vec3::new(3.0, 0.0, 3.0),
+    ];
+
+    let rotations = [
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.0, std::f32::consts::PI * 0.5, 0.0),
+        Vec3::new(0.0, std::f32::consts::PI, 0.0),
+        Vec3::new(0.0, std::f32::consts::PI * 1.5, 0.0),
+    ];
+
+    // Add instances of model1
+    for i in 0..2 {
+        let mut transform = Transform::new();
+        transform.position = positions[i];
+        transform.rotation = rotations[i];
+        transform.scale = Vec3::splat(1.0);
+        scene.add_object(model1.clone_with_device(&device, &queue), transform);
+    }
+
+    // Add instances of model2
+    for i in 2..4 {
+        let mut transform = Transform::new();
+        transform.position = positions[i];
+        transform.rotation = rotations[i];
+        transform.scale = Vec3::splat(1.0);
+        scene.add_object(model2.clone_with_device(&device, &queue), transform);
+    }
+
+    // Set up lighting
+    scene.set_ambient_light(0.2);
+    scene.set_directional_light(
+        Vec3::new(1.0, 0.9, 0.8), // Warm sunlight color
+        Vec3::new(-1.0, -1.0, -0.5).normalize(), // Sun direction
+    );
 
     let mut input = InputState {
         mouse_pressed: false,

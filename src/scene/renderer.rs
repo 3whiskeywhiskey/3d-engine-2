@@ -1,30 +1,27 @@
-use wgpu::util::DeviceExt;
 use crate::model::ModelVertex;
-use super::{Scene, Camera};
-use glam::Mat4;
+use super::Scene;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
+    camera_pos: [f32; 4],
 }
 
-impl CameraUniform {
-    fn new() -> Self {
-        Self {
-            view_proj: Mat4::IDENTITY.to_cols_array_2d(),
-        }
-    }
-
-    fn update_view_proj(&mut self, camera: &Camera) {
-        self.view_proj = camera.build_view_projection_matrix().to_cols_array_2d();
-    }
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct LightUniform {
+    direction: [f32; 4],
+    color: [f32; 4],
+    ambient: [f32; 4],
 }
 
 pub struct Renderer {
-    pipeline: wgpu::RenderPipeline,
+    pub pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    light_buffer: wgpu::Buffer,
+    light_bind_group: wgpu::BindGroup,
     depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
 }
@@ -44,11 +41,20 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
-        // Create camera bind group layout
+        // Create light uniform buffer
+        let light_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Light Buffer"),
+            size: std::mem::size_of::<LightUniform>() as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Create bind group layouts
         let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Camera Bind Group Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -56,17 +62,39 @@ impl Renderer {
                 },
                 count: None,
             }],
-            label: Some("camera_bind_group_layout"),
         });
 
-        // Create camera bind group
+        let light_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Light Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        // Create bind groups
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Camera Bind Group"),
             layout: &camera_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera_buffer.as_entire_binding(),
             }],
-            label: Some("camera_bind_group"),
+        });
+
+        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Light Bind Group"),
+            layout: &light_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: light_buffer.as_entire_binding(),
+            }],
         });
 
         // Create depth texture
@@ -89,7 +117,7 @@ impl Renderer {
         // Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&camera_bind_group_layout],
+            bind_group_layouts: &[&camera_bind_group_layout, &light_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -142,13 +170,14 @@ impl Renderer {
             pipeline,
             camera_buffer,
             camera_bind_group,
+            light_buffer,
+            light_bind_group,
             depth_texture,
             depth_view,
         }
     }
 
     pub fn resize(&mut self, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
-        // Recreate depth texture with new size
         self.depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Depth Texture"),
             size: wgpu::Extent3d {
@@ -176,8 +205,17 @@ impl Renderer {
         // Update camera uniform buffer
         let camera_uniform = CameraUniform {
             view_proj: scene.camera.build_view_projection_matrix().to_cols_array_2d(),
+            camera_pos: [scene.camera.position.x, scene.camera.position.y, scene.camera.position.z, 1.0],
         };
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[camera_uniform]));
+
+        // Update light uniform buffer
+        let light_uniform = LightUniform {
+            direction: [scene.light_direction.x, scene.light_direction.y, scene.light_direction.z, 0.0],
+            color: [scene.directional_light.x, scene.directional_light.y, scene.directional_light.z, 1.0],
+            ambient: [scene.ambient_light.x, scene.ambient_light.y, scene.ambient_light.z, 1.0],
+        };
+        queue.write_buffer(&self.light_buffer, 0, bytemuck::cast_slice(&[light_uniform]));
 
         // Create command encoder
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -216,6 +254,7 @@ impl Renderer {
             // Set pipeline and bind groups
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.light_bind_group, &[]);
 
             // Draw each object
             for object in &scene.objects {
