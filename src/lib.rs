@@ -3,6 +3,8 @@ use winit::{
     window::Window,
 };
 
+pub mod model;
+
 pub struct State<'window> {
     surface: wgpu::Surface<'window>,
     device: wgpu::Device,

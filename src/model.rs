@@ -94,6 +94,7 @@ mod tests {
     use super::*;
     use assert_fs::prelude::*;
     use std::io::Write;
+    use std::path::PathBuf;
 
     fn create_test_device() -> (wgpu::Device, wgpu::Queue) {
         pollster::block_on(async {
@@ -109,14 +110,22 @@ mod tests {
                 .request_device(
                     &wgpu::DeviceDescriptor {
                         label: None,
-                        features: wgpu::Features::empty(),
-                        limits: wgpu::Limits::default(),
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits::default(),
+                        memory_hints: Default::default(),
                     },
                     None,
                 )
                 .await
                 .unwrap()
         })
+    }
+
+    fn test_models_path() -> PathBuf {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests");
+        path.push("models");
+        path
     }
 
     #[test]
@@ -142,7 +151,38 @@ mod tests {
         }
     }
 
-    // This test creates a minimal valid GLTF file and tests loading
+    #[test]
+    fn test_load_obj_cube() {
+        let (device, queue) = create_test_device();
+        let model_path = test_models_path().join("cube.obj");
+        
+        let result = Model::load(&device, &queue, model_path);
+        assert!(result.is_ok(), "Failed to load OBJ cube: {:?}", result.err());
+        
+        let model = result.unwrap();
+        assert_eq!(model.meshes.len(), 1, "Cube should have one mesh");
+        assert_eq!(model.materials.len(), 1, "Cube should have one material");
+        
+        let mesh = &model.meshes[0];
+        assert_eq!(mesh.num_elements, 36, "Cube should have 36 indices (12 triangles)");
+    }
+
+    #[test]
+    fn test_load_gltf_cube() {
+        let (device, queue) = create_test_device();
+        let model_path = test_models_path().join("cube.gltf");
+        
+        let result = Model::load(&device, &queue, model_path);
+        assert!(result.is_ok(), "Failed to load GLTF cube: {:?}", result.err());
+        
+        let model = result.unwrap();
+        assert_eq!(model.meshes.len(), 1, "Cube should have one mesh");
+        assert_eq!(model.materials.len(), 1, "Cube should have one material");
+        
+        let mesh = &model.meshes[0];
+        assert_eq!(mesh.num_elements, 36, "Cube should have 36 indices (12 triangles)");
+    }
+
     #[test]
     fn test_minimal_gltf() {
         let (device, queue) = create_test_device();
