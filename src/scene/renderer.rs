@@ -22,26 +22,26 @@ impl CameraUniform {
 }
 
 pub struct Renderer {
-    pub(crate) pipeline: wgpu::RenderPipeline,
+    pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    depth_texture: wgpu::TextureView,
+    depth_texture: wgpu::Texture,
+    depth_view: wgpu::TextureView,
 }
 
 impl Renderer {
     pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
-        // Create shader modules
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/shader.wgsl").into()),
         });
 
         // Create camera uniform buffer
-        let camera_uniform = CameraUniform::new();
-        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Camera Buffer"),
-            contents: bytemuck::cast_slice(&[camera_uniform]),
+            size: std::mem::size_of::<CameraUniform>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         // Create camera bind group layout
@@ -71,6 +71,7 @@ impl Renderer {
 
         // Create depth texture
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
             size: wgpu::Extent3d {
                 width: config.width,
                 height: config.height,
@@ -81,9 +82,9 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            label: Some("depth_texture"),
             view_formats: &[],
-        }).create_view(&wgpu::TextureViewDescriptor::default());
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -142,11 +143,14 @@ impl Renderer {
             camera_buffer,
             camera_bind_group,
             depth_texture,
+            depth_view,
         }
     }
 
     pub fn resize(&mut self, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
+        // Recreate depth texture with new size
         self.depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
             size: wgpu::Extent3d {
                 width: config.width,
                 height: config.height,
@@ -157,9 +161,9 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            label: Some("depth_texture"),
             view_formats: &[],
-        }).create_view(&wgpu::TextureViewDescriptor::default());
+        });
+        self.depth_view = self.depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
     }
 
     pub fn render(
@@ -169,9 +173,10 @@ impl Renderer {
         view: &wgpu::TextureView,
         scene: &Scene,
     ) -> Result<(), wgpu::SurfaceError> {
-        // Update camera buffer
-        let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(&scene.camera);
+        // Update camera uniform buffer
+        let camera_uniform = CameraUniform {
+            view_proj: scene.camera.build_view_projection_matrix().to_cols_array_2d(),
+        };
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[camera_uniform]));
 
         // Create command encoder
@@ -179,6 +184,7 @@ impl Renderer {
             label: Some("Render Encoder"),
         });
 
+        // Begin render pass
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -196,7 +202,7 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_texture,
+                    view: &self.depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -207,6 +213,7 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
+            // Set pipeline and bind groups
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 

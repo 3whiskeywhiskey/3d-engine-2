@@ -68,6 +68,44 @@ impl Camera {
         let flip_y = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
         flip_y * proj * view
     }
+
+    pub fn move_forward(&mut self, distance: f32) {
+        let forward = (self.target - self.position).normalize();
+        self.position += forward * distance;
+        self.target += forward * distance;
+    }
+
+    pub fn move_right(&mut self, distance: f32) {
+        let forward = (self.target - self.position).normalize();
+        let right = forward.cross(self.up).normalize();
+        self.position += right * distance;
+        self.target += right * distance;
+    }
+
+    pub fn move_up(&mut self, distance: f32) {
+        self.position += self.up * distance;
+        self.target += self.up * distance;
+    }
+
+    pub fn rotate(&mut self, delta_x: f32, delta_y: f32) {
+        let forward = (self.target - self.position).normalize();
+        let right = forward.cross(self.up).normalize();
+
+        // Rotate around the up vector (yaw)
+        let rotation = Mat4::from_axis_angle(self.up, -delta_x);
+        let forward = rotation.transform_vector3(forward);
+
+        // Rotate around the right vector (pitch)
+        let rotation = Mat4::from_axis_angle(right, -delta_y);
+        let forward = rotation.transform_vector3(forward);
+
+        self.target = self.position + forward;
+    }
+
+    pub fn zoom(&mut self, factor: f32) {
+        let forward = (self.target - self.position).normalize();
+        self.position += forward * factor;
+    }
 }
 
 pub struct Scene {

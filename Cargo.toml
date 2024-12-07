@@ -6,6 +6,10 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "wgpu-3d-viewer"
+path = "src/main.rs"
+
 [dependencies]
 wgpu = "23.0.1"
 winit = "0.29"
