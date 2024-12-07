@@ -177,12 +177,17 @@ impl State {
             &renderer.material_bind_group_layout,
         ).expect("Failed to load model 2");
 
+        // Calculate Y offsets to place models on floor
+        // We need to offset by the negative of the minimum Y coordinate to place the bottom at y=0
+        let model1_y_offset = -model1.bounds_min[1];
+        let model2_y_offset = -model2.bounds_min[1];
+
         // Add multiple instances of each model with different transforms
         let positions = [
-            Vec3::new(-3.0, 0.0, -3.0),
-            Vec3::new(3.0, 0.0, -3.0),
-            Vec3::new(-3.0, 0.0, 3.0),
-            Vec3::new(3.0, 0.0, 3.0),
+            Vec3::new(-3.0, model1_y_offset, -3.0),
+            Vec3::new(3.0, model1_y_offset, -3.0),
+            Vec3::new(-3.0, model2_y_offset, 3.0),
+            Vec3::new(3.0, model2_y_offset, 3.0),
         ];
 
         let rotations = [

@@ -91,13 +91,32 @@ impl ObjData {
 pub struct Model {
     pub meshes: Vec<Mesh>,
     pub materials: Vec<Material>,
+    pub bounds_min: [f32; 3],
+    pub bounds_max: [f32; 3],
 }
 
 impl Model {
+    // Calculate the bounding box for a set of vertices
+    fn calculate_bounds(vertices: &[ModelVertex]) -> ([f32; 3], [f32; 3]) {
+        let mut min = [f32::INFINITY; 3];
+        let mut max = [f32::NEG_INFINITY; 3];
+
+        for vertex in vertices {
+            for i in 0..3 {
+                min[i] = min[i].min(vertex.position[i]);
+                max[i] = max[i].max(vertex.position[i]);
+            }
+        }
+
+        (min, max)
+    }
+
     pub fn clone_with_device(&self, device: &wgpu::Device, queue: &wgpu::Queue, material_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
         Self {
             meshes: self.meshes.iter().map(|mesh| mesh.clone_with_device(device, queue)).collect(),
             materials: self.materials.iter().map(|material| material.clone_with_device(device, queue, material_bind_group_layout)).collect(),
+            bounds_min: self.bounds_min,
+            bounds_max: self.bounds_max,
         }
     }
 
@@ -129,6 +148,9 @@ impl Model {
 
         let mut meshes = Vec::new();
         let mut materials = Vec::new();
+        // Track overall bounds of the model
+        let mut overall_min = [f32::INFINITY; 3];
+        let mut overall_max = [f32::NEG_INFINITY; 3];
 
         // Load materials first
         for material in document.materials() {
@@ -238,6 +260,13 @@ impl Model {
                     })
                     .collect();
 
+                // Update the model's bounding box
+                let (mesh_min, mesh_max) = Self::calculate_bounds(&vertices);
+                for i in 0..3 {
+                    overall_min[i] = overall_min[i].min(mesh_min[i]);
+                    overall_max[i] = overall_max[i].max(mesh_max[i]);
+                }
+
                 // Create vertex buffer
                 let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Mesh Vertex Buffer"),
@@ -271,6 +300,8 @@ impl Model {
         Ok(Self {
             meshes,
             materials,
+            bounds_min: overall_min,
+            bounds_max: overall_max,
         })
     }
 
@@ -284,6 +315,7 @@ impl Model {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
 
+        // Parse OBJ file
         for line in reader.lines() {
             let line = line?;
             let tokens: Vec<&str> = line.split_whitespace().collect();
@@ -328,6 +360,9 @@ impl Model {
             }
         }
 
+        // Calculate model bounds
+        let (overall_min, overall_max) = Self::calculate_bounds(&obj_data.vertices);
+
         // Create vertex buffer
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Mesh Vertex Buffer"),
@@ -365,6 +400,8 @@ impl Model {
         Ok(Self {
             meshes: vec![mesh],
             materials: vec![material],
+            bounds_min: overall_min,
+            bounds_max: overall_max,
         })
     }
 } 

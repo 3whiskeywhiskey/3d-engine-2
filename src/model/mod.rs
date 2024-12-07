@@ -118,9 +118,21 @@ impl Model {
             })),
         };
 
+        // Calculate bounds
+        let mut min = [f32::INFINITY; 3];
+        let mut max = [f32::NEG_INFINITY; 3];
+        for vertex in vertices {
+            for i in 0..3 {
+                min[i] = min[i].min(vertex.position[i]);
+                max[i] = max[i].max(vertex.position[i]);
+            }
+        }
+
         Self {
             meshes: vec![mesh],
             materials: vec![material],
+            bounds_min: min,
+            bounds_max: max,
         }
     }
 } 
