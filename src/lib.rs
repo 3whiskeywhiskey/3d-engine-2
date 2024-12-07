@@ -130,11 +130,11 @@ impl State {
             scene.add_object(model2.clone_with_device(&device, &queue, &renderer.material_bind_group_layout), transform);
         }
 
-        // Set up lighting
-        scene.set_ambient_light(0.2);
+        // Set up more dramatic lighting
+        scene.set_ambient_light(0.05); // Reduce ambient light for more contrast
         scene.set_directional_light(
-            Vec3::new(1.0, 0.9, 0.8), // Warm sunlight color
-            Vec3::new(-1.0, -1.0, -0.5).normalize(), // Sun direction
+            Vec3::new(1.0, 0.95, 0.8), // Slightly warm sunlight
+            Vec3::new(-1.0, -1.0, -1.0).normalize(), // Light coming from above and slightly behind
         );
 
         Self {

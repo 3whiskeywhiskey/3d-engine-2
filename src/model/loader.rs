@@ -50,11 +50,12 @@ impl ObjData {
                 .map(|i| if i < 0 { self.normals.len() as i32 + i } else { i - 1 })
                 .unwrap_or(0);
 
-            // Create vertex
+            // Create vertex with default tangent
             let vertex = ModelVertex {
                 position: self.positions[position_idx as usize],
                 tex_coords: if tex_coord_idx >= 0 { self.tex_coords[tex_coord_idx as usize] } else { [0.0, 0.0] },
                 normal: if normal_idx >= 0 { self.normals[normal_idx as usize] } else { [0.0, 1.0, 0.0] },
+                tangent: [1.0, 0.0, 0.0, 1.0], // Default tangent along X axis
             };
 
             // Check if we've seen this vertex before
@@ -148,17 +149,30 @@ impl Model {
                 }
             }
 
+            // Try to load the normal map
+            let mut normal_texture = None;
+            if let Some(normal) = material.normal_texture() {
+                let texture = normal.texture();
+                let source = texture.source().index();
+                if let Ok(texture) = Texture::from_gltf_image(
+                    device,
+                    queue,
+                    &images[source],
+                    Some(&format!("normal_{}", source))
+                ) {
+                    normal_texture = Some(texture);
+                }
+            }
+
             let mut material = Material {
                 name: material.name().unwrap_or("").to_string(),
                 diffuse_texture,
+                normal_texture,
                 bind_group: None,
             };
 
-            // Create bind group if we have a texture
-            if material.diffuse_texture.is_some() {
-                material.create_bind_group(device, material_bind_group_layout);
-            }
-
+            // Create bind group if we have textures
+            material.create_bind_group(device, material_bind_group_layout);
             materials.push(material);
         }
 
@@ -167,6 +181,7 @@ impl Model {
             materials.push(Material {
                 name: "default".to_string(),
                 diffuse_texture: None,
+                normal_texture: None,
                 bind_group: None,
             });
         }
@@ -194,6 +209,15 @@ impl Model {
                     .map(|iter| iter.into_f32().collect())
                     .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
 
+                // Get tangents (or generate default)
+                let tangents: Vec<[f32; 4]> = reader
+                    .read_tangents()
+                    .map(|iter| iter.collect())
+                    .unwrap_or_else(|| {
+                        // Generate default tangents (this is a simplified version)
+                        positions.iter().map(|_| [1.0, 0.0, 0.0, 1.0]).collect()
+                    });
+
                 // Get indices
                 let indices: Vec<u32> = reader
                     .read_indices()
@@ -205,10 +229,12 @@ impl Model {
                     .iter()
                     .zip(tex_coords.iter())
                     .zip(normals.iter())
-                    .map(|((pos, tex), norm)| ModelVertex {
+                    .zip(tangents.iter())
+                    .map(|(((pos, tex), norm), tan)| ModelVertex {
                         position: *pos,
                         tex_coords: *tex,
                         normal: *norm,
+                        tangent: *tan,
                     })
                     .collect();
 
@@ -254,123 +280,91 @@ impl Model {
         path: &Path,
         material_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<Self> {
+        let mut obj_data = ObjData::new();
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        let mut obj_data = ObjData::new();
-        let mut current_material_index = 0;
-
-        // Load MTL file if it exists
-        let mut materials = Vec::new();
-        let mut material_map = HashMap::new();
 
         for line in reader.lines() {
             let line = line?;
             let tokens: Vec<&str> = line.split_whitespace().collect();
-            if tokens.is_empty() { continue; }
+            if tokens.is_empty() {
+                continue;
+            }
 
             match tokens[0] {
                 "v" => {
                     if tokens.len() < 4 {
-                        return Err(anyhow::anyhow!("Invalid vertex position"));
+                        continue;
                     }
-                    obj_data.positions.push([
-                        tokens[1].parse()?,
-                        tokens[2].parse()?,
-                        tokens[3].parse()?
-                    ]);
-                },
+                    let x = tokens[1].parse::<f32>()?;
+                    let y = tokens[2].parse::<f32>()?;
+                    let z = tokens[3].parse::<f32>()?;
+                    obj_data.positions.push([x, y, z]);
+                }
                 "vt" => {
                     if tokens.len() < 3 {
-                        return Err(anyhow::anyhow!("Invalid texture coordinate"));
+                        continue;
                     }
-                    obj_data.tex_coords.push([
-                        tokens[1].parse()?,
-                        tokens[2].parse()?
-                    ]);
-                },
+                    let u = tokens[1].parse::<f32>()?;
+                    let v = tokens[2].parse::<f32>()?;
+                    obj_data.tex_coords.push([u, v]);
+                }
                 "vn" => {
                     if tokens.len() < 4 {
-                        return Err(anyhow::anyhow!("Invalid normal"));
+                        continue;
                     }
-                    obj_data.normals.push([
-                        tokens[1].parse()?,
-                        tokens[2].parse()?,
-                        tokens[3].parse()?
-                    ]);
-                },
+                    let x = tokens[1].parse::<f32>()?;
+                    let y = tokens[2].parse::<f32>()?;
+                    let z = tokens[3].parse::<f32>()?;
+                    obj_data.normals.push([x, y, z]);
+                }
                 "f" => {
                     if tokens.len() < 4 {
-                        return Err(anyhow::anyhow!("Invalid face"));
+                        continue;
                     }
                     obj_data.process_face(&tokens[1..])?;
-                },
-                "mtllib" => {
-                    if tokens.len() < 2 {
-                        continue;
-                    }
-                    let mtl_path = path.parent().unwrap().join(tokens[1]);
-                    if mtl_path.exists() {
-                        let texture_path = path.parent().unwrap().join("cube_texture.png");
-                        let mut material = Material {
-                            name: "default".to_string(),
-                            diffuse_texture: None,
-                            bind_group: None,
-                        };
-
-                        if texture_path.exists() {
-                            if let Ok(texture) = Texture::from_path(device, queue, &texture_path, Some("cube_texture")) {
-                                material.diffuse_texture = Some(texture);
-                                material.create_bind_group(device, material_bind_group_layout);
-                            }
-                        }
-
-                        materials.push(material);
-                        material_map.insert("default".to_string(), 0);
-                    }
-                },
-                "usemtl" => {
-                    if tokens.len() < 2 {
-                        continue;
-                    }
-                    current_material_index = *material_map.get(tokens[1]).unwrap_or(&0);
-                },
+                }
                 _ => {}
             }
         }
 
-        // If no materials were loaded, create a default one
-        if materials.is_empty() {
-            materials.push(Material {
-                name: "default".to_string(),
-                diffuse_texture: None,
-                bind_group: None,
-            });
-        }
-
-        // Create the mesh
+        // Create vertex buffer
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Mesh Vertex Buffer"),
             contents: bytemuck::cast_slice(&obj_data.vertices),
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC,
         });
 
+        // Create index buffer
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Mesh Index Buffer"),
             contents: bytemuck::cast_slice(&obj_data.indices),
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_SRC,
         });
 
+        // Create mesh
         let mesh = Mesh {
-            name: path.file_stem().unwrap().to_str().unwrap().to_string(),
+            name: path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string(),
             vertex_buffer,
             index_buffer,
             num_elements: obj_data.indices.len() as u32,
-            material_index: current_material_index,
+            material_index: 0,
         };
+
+        // Create default material
+        let mut material = Material {
+            name: "default".to_string(),
+            diffuse_texture: None,
+            normal_texture: None,
+            bind_group: None,
+        };
+
+        // Create bind group
+        material.create_bind_group(device, material_bind_group_layout);
 
         Ok(Self {
             meshes: vec![mesh],
-            materials,
+            materials: vec![material],
         })
     }
 } 
