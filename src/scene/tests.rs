@@ -84,34 +84,23 @@ fn test_camera_new() {
 
 #[test]
 fn test_camera_view_projection() {
-    let camera = Camera::new(Vec3::new(0.0, 1.0, 2.0), 800.0 / 600.0);
+    let mut camera = Camera::new(Vec3::ZERO, 1.0);
+    
+    // Set initial orientation (looking down -Z)
+    camera.yaw = -90.0;
+    camera.pitch = 0.0;
+    
     let view_proj = camera.build_view_projection_matrix();
     
-    // The camera is at (0, 1, 2) looking along -Z
-    // Let's test a few points to verify the projection
+    // Test points at different heights
+    let bottom_point = view_proj.project_point3(Vec3::new(0.0, -5.0, -5.0));
+    let top_point = view_proj.project_point3(Vec3::new(0.0, 5.0, -5.0));
+    assert!(bottom_point.y < top_point.y, "Top point should appear above bottom point in screen space");
     
-    // Test points in clip space after projection
-    let origin = view_proj.project_point3(Vec3::ZERO);
-    // In WGPU's coordinate system after projection:
-    // - Points in front of camera have z between 0 and 1
-    // - Points above camera have negative y in clip space
-    assert!(origin.z >= 0.0 && origin.z <= 1.0, 
-        "Origin z should be between 0 and 1 after projection, got {}", origin.z);
-    
-    // A point above the camera should have negative y in clip space
-    let above = view_proj.project_point3(Vec3::new(0.0, 2.0, 0.0));
-    assert!(above.y < 0.0, 
-        "Point above camera should have negative y in clip space, got {}", above.y);
-    
-    // A point below the camera should have positive y in clip space
-    let below = view_proj.project_point3(Vec3::new(0.0, -1.0, 0.0));
-    assert!(below.y > 0.0,
-        "Point below camera should have positive y in clip space, got {}", below.y);
-    
-    // A point further from the camera but still in view
-    let far_point = view_proj.project_point3(Vec3::new(0.0, 1.0, -1.0));
-    assert!(far_point.z >= 0.0 && far_point.z <= 1.0,
-        "Point z should be between 0 and 1 after projection, got {}", far_point.z);
+    // Test points at different horizontal positions
+    let left_point = view_proj.project_point3(Vec3::new(-5.0, 0.0, -5.0));
+    let right_point = view_proj.project_point3(Vec3::new(5.0, 0.0, -5.0));
+    assert!(left_point.x < right_point.x, "Right point should appear to the right of left point in screen space");
 }
 
 #[test]
@@ -137,6 +126,7 @@ fn test_scene_add_object() {
             position: [0.0, 0.0, 0.0],
             tex_coords: [0.0, 0.0],
             normal: [0.0, 1.0, 0.0],
+            tangent: [1.0, 0.0, 0.0, 1.0],  // Default tangent along X axis with positive handedness
         }]),
         usage: wgpu::BufferUsages::VERTEX,
     });

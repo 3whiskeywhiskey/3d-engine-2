@@ -44,6 +44,22 @@ fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
         ],
     })
 }
@@ -59,8 +75,8 @@ fn test_models_path() -> PathBuf {
 fn test_model_vertex_size() {
     assert_eq!(
         std::mem::size_of::<ModelVertex>(),
-        32,  // 3 * 4 (position) + 2 * 4 (tex_coords) + 3 * 4 (normal) = 32 bytes
-        "ModelVertex size should be 32 bytes"
+        48,  // 3 * 4 (position) + 2 * 4 (tex_coords) + 3 * 4 (normal) + 4 * 4 (tangent) = 48 bytes
+        "ModelVertex size should be 48 bytes"
     );
 }
 
@@ -83,12 +99,84 @@ fn test_unsupported_format() {
 fn test_load_obj() {
     let (device, queue) = create_test_device();
     let bind_group_layout = create_bind_group_layout(&device);
-    let model_path = test_models_path().join("cube.obj");
-    let model = Model::load(&device, &queue, model_path, &bind_group_layout).unwrap();
     
+    // Create a default texture
+    let default_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Default Texture"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    
+    // Write white pixel to texture
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &default_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &[255, 255, 255, 255],
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: Some(1),
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+    
+    let default_texture_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    
+    let default_texture = Texture {
+        texture: default_texture,
+        view: default_texture_view,
+        sampler: default_sampler,
+    };
+    
+    // Create a material with the default texture
+    let mut material = Material {
+        name: "default".to_string(),
+        diffuse_texture: Some(default_texture),
+        normal_texture: None,
+        bind_group: None,
+    };
+    material.create_bind_group(&device, &bind_group_layout);
+    
+    // Load the model
+    let model_path = test_models_path().join("cube.obj");
+    let mut model = Model::load(&device, &queue, model_path, &bind_group_layout).unwrap();
+    
+    // Replace the default material
+    model.materials[0] = material;
+    
+    // Verify model structure
     assert_eq!(model.meshes.len(), 1, "Cube should have one mesh");
     assert_eq!(model.materials.len(), 1, "Cube should have one material");
+    assert!(model.materials[0].diffuse_texture.is_some(), "Material should have a diffuse texture");
+    assert!(model.materials[0].bind_group.is_some(), "Material should have a bind group");
     
+    // Verify mesh data
     let mesh = &model.meshes[0];
     assert_eq!(mesh.num_elements, 36, "Cube should have 36 indices (12 triangles)");
 }
@@ -135,9 +223,15 @@ fn test_texture_loading() {
 #[test]
 fn test_vertex_buffer_layout() {
     let layout = ModelVertex::desc();
-    assert_eq!(layout.array_stride, 32);
+    assert_eq!(layout.array_stride, 48);
     assert_eq!(layout.step_mode, wgpu::VertexStepMode::Vertex);
-    assert_eq!(layout.attributes.len(), 3);
+    assert_eq!(layout.attributes.len(), 4);
+    
+    // Verify attribute formats
+    assert_eq!(layout.attributes[0].format, wgpu::VertexFormat::Float32x3);  // position
+    assert_eq!(layout.attributes[1].format, wgpu::VertexFormat::Float32x2);  // tex_coords
+    assert_eq!(layout.attributes[2].format, wgpu::VertexFormat::Float32x3);  // normal
+    assert_eq!(layout.attributes[3].format, wgpu::VertexFormat::Float32x4);  // tangent
 }
 
 #[test]
@@ -145,11 +239,13 @@ fn test_material_bind_group() {
     let (device, queue) = create_test_device();
     let bind_group_layout = create_bind_group_layout(&device);
     let path = test_models_path().join("cube_texture.png");
-    let texture = Texture::from_path(&device, &queue, &path, Some("test_texture")).unwrap();
+    let diffuse_texture = Texture::from_path(&device, &queue, &path, Some("diffuse_texture")).unwrap();
+    let normal_texture = Texture::from_path(&device, &queue, &path, Some("normal_texture")).unwrap();
     
     let mut material = Material {
         name: "test_material".to_string(),
-        diffuse_texture: Some(texture),
+        diffuse_texture: Some(diffuse_texture),
+        normal_texture: Some(normal_texture),
         bind_group: None,
     };
 

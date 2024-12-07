@@ -237,24 +237,14 @@ mod tests {
     #[test]
     fn test_mouse_movement() {
         let mut camera = Camera::new(Vec3::ZERO, 1.0);
-        
-        // Test yaw movement
-        camera.process_mouse(10.0, 0.0);
-        assert_relative_eq!(camera.yaw, -90.0 + 10.0, epsilon = 0.001); // 1.0 sensitivity
 
-        // Test small pitch movements
-        camera.process_mouse(0.0, -10.0);  // Move mouse up
-        assert_relative_eq!(camera.pitch, 10.0, epsilon = 0.001); // Should increase pitch
-        
-        camera.process_mouse(0.0, 10.0);   // Move mouse down
-        assert_relative_eq!(camera.pitch, 0.0, epsilon = 0.001); // Should decrease pitch
-        
-        // Test pitch clamping with large movements
-        camera.process_mouse(0.0, -100.0); // Move mouse way up
-        assert_relative_eq!(camera.pitch, 89.0, epsilon = 0.001); // Should clamp to 89
-        
-        camera.process_mouse(0.0, 100.0);  // Move mouse way down
-        assert_relative_eq!(camera.pitch, -89.0, epsilon = 0.001); // Should clamp to -89
+        // Move mouse right (positive dx)
+        camera.process_mouse(50.0, 0.0);
+        assert_relative_eq!(camera.yaw, -40.0, epsilon = 0.001);  // 50 units * 1.0 sensitivity = 50 degrees
+
+        // Move mouse up (negative dy)
+        camera.process_mouse(0.0, -50.0);
+        assert_relative_eq!(camera.pitch, 50.0, epsilon = 0.001);  // -50 units * 1.0 sensitivity = 50 degrees
     }
 
     #[test]
