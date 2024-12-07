@@ -72,36 +72,41 @@ fn test_transform_matrix() {
 
 #[test]
 fn test_camera_new() {
-    let camera = Camera::new(800, 600);
+    let camera = Camera::new(Vec3::new(0.0, 1.0, 2.0), 800.0 / 600.0);
     assert_eq!(camera.position, Vec3::new(0.0, 1.0, 2.0));
-    assert_eq!(camera.target, Vec3::ZERO);
-    assert_eq!(camera.up, Vec3::Y);
+    assert_eq!(camera.yaw, -90.0); // Looking along -Z
+    assert_eq!(camera.pitch, 0.0);
     assert!((camera.aspect - 800.0 / 600.0).abs() < f32::EPSILON);
-    assert!((camera.fovy - 45.0).abs() < f32::EPSILON);
-    assert!(camera.znear > 0.0);
-    assert!(camera.zfar > camera.znear);
+    assert!((camera.fov - 45.0).abs() < f32::EPSILON);
+    assert!(camera.near > 0.0);
+    assert!(camera.far > camera.near);
 }
 
 #[test]
 fn test_camera_view_projection() {
-    let camera = Camera::new(800, 600);
+    let camera = Camera::new(Vec3::new(0.0, 1.0, 2.0), 800.0 / 600.0);
     let view_proj = camera.build_view_projection_matrix();
     
-    // The camera is at (0, 1, 2) looking at (0, 0, 0)
+    // The camera is at (0, 1, 2) looking along -Z
     // Let's test a few points to verify the projection
     
     // Test points in clip space after projection
     let origin = view_proj.project_point3(Vec3::ZERO);
     // In WGPU's coordinate system after projection:
     // - Points in front of camera have z between 0 and 1
-    // - Y is flipped, so points below camera have positive y
+    // - Points above camera have negative y in clip space
     assert!(origin.z >= 0.0 && origin.z <= 1.0, 
         "Origin z should be between 0 and 1 after projection, got {}", origin.z);
     
-    // A point above the camera
+    // A point above the camera should have negative y in clip space
     let above = view_proj.project_point3(Vec3::new(0.0, 2.0, 0.0));
-    assert!(above.y < origin.y, 
-        "Point above camera should have smaller y than origin after projection");
+    assert!(above.y < 0.0, 
+        "Point above camera should have negative y in clip space, got {}", above.y);
+    
+    // A point below the camera should have positive y in clip space
+    let below = view_proj.project_point3(Vec3::new(0.0, -1.0, 0.0));
+    assert!(below.y > 0.0,
+        "Point below camera should have positive y in clip space, got {}", below.y);
     
     // A point further from the camera but still in view
     let far_point = view_proj.project_point3(Vec3::new(0.0, 1.0, -1.0));
@@ -111,17 +116,19 @@ fn test_camera_view_projection() {
 
 #[test]
 fn test_scene_new() {
-    let scene = Scene::new(800, 600);
+    let camera = Camera::new(Vec3::new(0.0, 1.0, 2.0), 800.0 / 600.0);
+    let scene = Scene::new(camera);
     assert!(scene.objects.is_empty());
-    assert_eq!(scene.ambient_light, Vec3::splat(0.1));
-    assert_eq!(scene.directional_light, Vec3::ONE);
+    assert_eq!(scene.ambient_light, Vec3::new(0.1, 0.1, 0.1));
+    assert_eq!(scene.directional_light, Vec3::new(1.0, 1.0, 1.0));
     assert!(scene.light_direction.is_normalized());
 }
 
 #[test]
 fn test_scene_add_object() {
     let ctx = TestContext::new();
-    let mut scene = Scene::new(800, 600);
+    let camera = Camera::new(Vec3::new(0.0, 1.0, 2.0), 800.0 / 600.0);
+    let mut scene = Scene::new(camera);
     
     // Create a simple test model (just a vertex buffer and index buffer)
     let vertex_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -161,7 +168,8 @@ fn test_scene_add_object() {
 
 #[test]
 fn test_scene_resize() {
-    let mut scene = Scene::new(800, 600);
+    let camera = Camera::new(Vec3::new(0.0, 1.0, 2.0), 800.0 / 600.0);
+    let mut scene = Scene::new(camera);
     let original_aspect = scene.camera.aspect;
     
     // Change to a significantly different aspect ratio

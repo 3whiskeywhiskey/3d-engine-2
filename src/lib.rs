@@ -1,56 +1,66 @@
+use std::sync::Arc;
 use winit::{
-    event::*,
+    event_loop::EventLoop,
     window::Window,
-    keyboard::{KeyCode, PhysicalKey},
 };
+use glam::Vec3;
+use std::path::Path;
 
 pub mod model;
 pub mod scene;
 
-use scene::{Scene, Renderer};
+use scene::{Scene, Renderer, camera::Camera, Transform};
+use model::Model;
 
-pub struct State<'window> {
-    surface: wgpu::Surface<'window>,
+pub struct State {
+    surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    size: winit::dpi::PhysicalSize<u32>,
-    window: &'window Window,
-    scene: Scene,
+    window: Arc<Window>,
+    pub scene: Scene,
     renderer: Renderer,
 }
 
-impl<'window> State<'window> {
-    pub async fn new(window: &'window Window) -> Self {
+impl State {
+    pub fn new(window: Window) -> Self {
+        let window = Arc::new(window);
         let size = window.inner_size();
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
-        let surface = instance.create_surface(window).unwrap();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            dx12_shader_compiler: Default::default(),
+            flags: wgpu::InstanceFlags::default(),
+            gles_minor_version: wgpu::Gles3MinorVersion::default(),
+        });
 
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                force_fallback_adapter: false,
-                compatible_surface: Some(&surface),
-            })
-            .await
-            .unwrap();
+        let surface = instance.create_surface(window.clone()).unwrap();
 
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
-            .await
-            .unwrap();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        }))
+        .unwrap();
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: Default::default(),
+            },
+            None,
+        ))
+        .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps.formats[0];
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -65,15 +75,73 @@ impl<'window> State<'window> {
 
         surface.configure(&device, &config);
 
-        let scene = Scene::new(size.width, size.height);
+        let camera = Camera::new(
+            Vec3::new(0.0, 1.0, 2.0),
+            size.width as f32 / size.height as f32,
+        );
+        let mut scene = Scene::new(camera);
         let renderer = Renderer::new(&device, &queue, &config);
+
+        // Load test models
+        let model1 = Model::load(
+            &device,
+            &queue,
+            Path::new("assets/8b16ddeb-f011-4f13-bab7-615edd40aee9.glb"),
+            &renderer.material_bind_group_layout,
+        ).expect("Failed to load model 1");
+
+        let model2 = Model::load(
+            &device,
+            &queue,
+            Path::new("assets/cb088356-1d69-41a5-b46d-4bc22aafa1b7.glb"),
+            &renderer.material_bind_group_layout,
+        ).expect("Failed to load model 2");
+
+        // Add multiple instances of each model with different transforms
+        let positions = [
+            Vec3::new(-3.0, 0.0, -3.0),
+            Vec3::new(3.0, 0.0, -3.0),
+            Vec3::new(-3.0, 0.0, 3.0),
+            Vec3::new(3.0, 0.0, 3.0),
+        ];
+
+        let rotations = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, std::f32::consts::PI * 0.5, 0.0),
+            Vec3::new(0.0, std::f32::consts::PI, 0.0),
+            Vec3::new(0.0, std::f32::consts::PI * 1.5, 0.0),
+        ];
+
+        // Add instances of model1
+        for i in 0..2 {
+            let mut transform = Transform::new();
+            transform.position = positions[i];
+            transform.rotation = rotations[i];
+            transform.scale = Vec3::splat(1.0);
+            scene.add_object(model1.clone_with_device(&device, &queue, &renderer.material_bind_group_layout), transform);
+        }
+
+        // Add instances of model2
+        for i in 2..4 {
+            let mut transform = Transform::new();
+            transform.position = positions[i];
+            transform.rotation = rotations[i];
+            transform.scale = Vec3::splat(1.0);
+            scene.add_object(model2.clone_with_device(&device, &queue, &renderer.material_bind_group_layout), transform);
+        }
+
+        // Set up lighting
+        scene.set_ambient_light(0.2);
+        scene.set_directional_light(
+            Vec3::new(1.0, 0.9, 0.8), // Warm sunlight color
+            Vec3::new(-1.0, -1.0, -0.5).normalize(), // Sun direction
+        );
 
         Self {
             surface,
             device,
             queue,
             config,
-            size,
             window,
             scene,
             renderer,
@@ -81,49 +149,24 @@ impl<'window> State<'window> {
     }
 
     pub fn window(&self) -> &Window {
-        self.window
+        &self.window
     }
 
-    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        if new_size.width > 0 && new_size.height > 0 {
-            self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width > 0 && height > 0 {
+            self.config.width = width;
+            self.config.height = height;
             self.surface.configure(&self.device, &self.config);
-            self.scene.resize(new_size.width, new_size.height);
+            self.scene.resize(width, height);
             self.renderer.resize(&self.device, &self.config);
         }
     }
 
-    pub fn input(&mut self, event: &WindowEvent) -> bool {
-        match event {
-            WindowEvent::KeyboardInput { 
-                event: KeyEvent {
-                    state: ElementState::Pressed,
-                    physical_key: PhysicalKey::Code(KeyCode::Space),
-                    ..
-                },
-                ..
-            } => {
-                // Example: Reset camera position when space is pressed
-                self.scene.camera.position = glam::Vec3::new(0.0, 1.0, 2.0);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    pub fn update(&mut self) {
-        // Add any scene updates here
-    }
-
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.get_current_texture()?;
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        
+        let frame = self.surface.get_current_texture()?;
+        let view = frame.texture.create_view(&Default::default());
         self.renderer.render(&self.device, &self.queue, &view, &self.scene)?;
-        
-        output.present();
+        frame.present();
         Ok(())
     }
 } 
