@@ -210,9 +210,9 @@ impl Renderer {
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-            // Draw each object in the scene
+            // Draw each object
             for object in &scene.objects {
-                for mesh in &object.model.meshes {
+                for mesh in &object.0.meshes {
                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..mesh.num_elements, 0, 0..1);

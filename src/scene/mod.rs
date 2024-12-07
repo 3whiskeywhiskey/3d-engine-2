@@ -22,9 +22,10 @@ impl Transform {
     }
 
     pub fn to_matrix(&self) -> Mat4 {
-        Mat4::from_translation(self.position)
-            * Mat4::from_euler(glam::EulerRot::XYZ, self.rotation.x, self.rotation.y, self.rotation.z)
-            * Mat4::from_scale(self.scale)
+        let translation = Mat4::from_translation(self.position);
+        let rotation = Mat4::from_euler(glam::EulerRot::XYZ, self.rotation.x, self.rotation.y, self.rotation.z);
+        let scale = Mat4::from_scale(self.scale);
+        translation * rotation * scale
     }
 }
 
@@ -64,13 +65,14 @@ impl Camera {
             self.znear,
             self.zfar,
         );
-        proj * view
+        let flip_y = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
+        flip_y * proj * view
     }
 }
 
 pub struct Scene {
-    pub objects: Vec<SceneObject>,
     pub camera: Camera,
+    pub objects: Vec<(Model, Transform)>,
     pub ambient_light: Vec3,
     pub directional_light: Vec3,
     pub light_direction: Vec3,
@@ -79,8 +81,8 @@ pub struct Scene {
 impl Scene {
     pub fn new(width: u32, height: u32) -> Self {
         Self {
-            objects: Vec::new(),
             camera: Camera::new(width, height),
+            objects: Vec::new(),
             ambient_light: Vec3::splat(0.1),
             directional_light: Vec3::ONE,
             light_direction: Vec3::new(-1.0, -1.0, -1.0).normalize(),
@@ -88,7 +90,7 @@ impl Scene {
     }
 
     pub fn add_object(&mut self, model: Model, transform: Transform) {
-        self.objects.push(SceneObject { model, transform });
+        self.objects.push((model, transform));
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

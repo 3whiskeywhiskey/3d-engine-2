@@ -87,13 +87,26 @@ fn test_camera_view_projection() {
     let camera = Camera::new(800, 600);
     let view_proj = camera.build_view_projection_matrix();
     
-    // Test that the camera transforms a point at the origin
-    let origin = view_proj.project_point3(Vec3::ZERO);
     // The camera is at (0, 1, 2) looking at (0, 0, 0)
-    // So the origin should be in front of the camera (negative z in view space)
-    // and below the camera (negative y in view space)
-    assert!(origin.z < 0.0, "Point should be in front of camera");
-    assert!(origin.y < 0.0, "Point should be below camera");
+    // Let's test a few points to verify the projection
+    
+    // Test points in clip space after projection
+    let origin = view_proj.project_point3(Vec3::ZERO);
+    // In WGPU's coordinate system after projection:
+    // - Points in front of camera have z between 0 and 1
+    // - Y is flipped, so points below camera have positive y
+    assert!(origin.z >= 0.0 && origin.z <= 1.0, 
+        "Origin z should be between 0 and 1 after projection, got {}", origin.z);
+    
+    // A point above the camera
+    let above = view_proj.project_point3(Vec3::new(0.0, 2.0, 0.0));
+    assert!(above.y < origin.y, 
+        "Point above camera should have smaller y than origin after projection");
+    
+    // A point further from the camera but still in view
+    let far_point = view_proj.project_point3(Vec3::new(0.0, 1.0, -1.0));
+    assert!(far_point.z >= 0.0 && far_point.z <= 1.0,
+        "Point z should be between 0 and 1 after projection, got {}", far_point.z);
 }
 
 #[test]
@@ -151,10 +164,17 @@ fn test_scene_resize() {
     let mut scene = Scene::new(800, 600);
     let original_aspect = scene.camera.aspect;
     
-    scene.resize(1024, 768);
-    let new_aspect = 1024.0 / 768.0;
-    assert!((scene.camera.aspect - new_aspect).abs() < f32::EPSILON);
-    assert!((scene.camera.aspect - original_aspect).abs() > f32::EPSILON);
+    // Change to a significantly different aspect ratio
+    scene.resize(1600, 900);
+    let new_aspect = 1600.0 / 900.0;
+    
+    // Verify the new aspect ratio is correct
+    assert!((scene.camera.aspect - new_aspect).abs() < f32::EPSILON, 
+            "Expected aspect ratio {}, got {}", new_aspect, scene.camera.aspect);
+    
+    // Verify it's different from the original
+    assert!((scene.camera.aspect - original_aspect).abs() > f32::EPSILON,
+            "Aspect ratio didn't change: {} vs {}", scene.camera.aspect, original_aspect);
 }
 
 #[test]
