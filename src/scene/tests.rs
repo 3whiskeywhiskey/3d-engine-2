@@ -192,6 +192,6 @@ fn test_renderer_creation() {
         desired_maximum_frame_latency: 2,
     };
 
-    let renderer = Renderer::new(&ctx.device, &config);
+    let renderer = Renderer::new(&ctx.device, &ctx.queue, &config);
     assert!(std::ptr::eq(&renderer.pipeline, &renderer.pipeline));
 } 

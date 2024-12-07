@@ -78,19 +78,21 @@ async fn run() {
     };
     surface.configure(&device, &config);
 
-    let mut renderer = Renderer::new(&device, &config);
+    let mut renderer = Renderer::new(&device, &queue, &config);
 
     // Load the models
     let model1 = Model::load(
         &device,
         &queue,
         Path::new("assets/8b16ddeb-f011-4f13-bab7-615edd40aee9.glb"),
+        &renderer.material_bind_group_layout,
     ).expect("Failed to load model 1");
 
     let model2 = Model::load(
         &device,
         &queue,
         Path::new("assets/cb088356-1d69-41a5-b46d-4bc22aafa1b7.glb"),
+        &renderer.material_bind_group_layout,
     ).expect("Failed to load model 2");
 
     // Add multiple instances of each model with different transforms
@@ -114,7 +116,7 @@ async fn run() {
         transform.position = positions[i];
         transform.rotation = rotations[i];
         transform.scale = Vec3::splat(1.0);
-        scene.add_object(model1.clone_with_device(&device, &queue), transform);
+        scene.add_object(model1.clone_with_device(&device, &queue, &renderer.material_bind_group_layout), transform);
     }
 
     // Add instances of model2
@@ -123,7 +125,7 @@ async fn run() {
         transform.position = positions[i];
         transform.rotation = rotations[i];
         transform.scale = Vec3::splat(1.0);
-        scene.add_object(model2.clone_with_device(&device, &queue), transform);
+        scene.add_object(model2.clone_with_device(&device, &queue, &renderer.material_bind_group_layout), transform);
     }
 
     // Set up lighting

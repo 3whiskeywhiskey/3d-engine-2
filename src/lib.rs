@@ -66,7 +66,7 @@ impl<'window> State<'window> {
         surface.configure(&device, &config);
 
         let scene = Scene::new(size.width, size.height);
-        let renderer = Renderer::new(&device, &config);
+        let renderer = Renderer::new(&device, &queue, &config);
 
         Self {
             surface,

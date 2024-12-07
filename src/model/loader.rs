@@ -93,10 +93,10 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn clone_with_device(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub fn clone_with_device(&self, device: &wgpu::Device, queue: &wgpu::Queue, material_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
         Self {
             meshes: self.meshes.iter().map(|mesh| mesh.clone_with_device(device, queue)).collect(),
-            materials: self.materials.iter().map(|material| material.clone_with_device(device)).collect(),
+            materials: self.materials.iter().map(|material| material.clone_with_device(device, queue, material_bind_group_layout)).collect(),
         }
     }
 
@@ -104,6 +104,7 @@ impl Model {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         path: P,
+        material_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<Self> {
         let path = path.as_ref();
         let extension = path.extension()
@@ -111,8 +112,8 @@ impl Model {
             .unwrap_or("");
 
         match extension.to_lowercase().as_str() {
-            "glb" | "gltf" => Self::load_gltf(device, queue, path),
-            "obj" => Self::load_obj(device, queue, path),
+            "glb" | "gltf" => Self::load_gltf(device, queue, path, material_bind_group_layout),
+            "obj" => Self::load_obj(device, queue, path, material_bind_group_layout),
             _ => Err(anyhow::anyhow!("Unsupported model format: {}", extension))
         }
     }
@@ -121,6 +122,7 @@ impl Model {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         path: &Path,
+        material_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<Self> {
         let (document, buffers, images) = gltf::import(path)?;
 
@@ -150,12 +152,11 @@ impl Model {
                 name: material.name().unwrap_or("").to_string(),
                 diffuse_texture,
                 bind_group: None,
-                bind_group_layout: None,
             };
 
             // Create bind group if we have a texture
             if material.diffuse_texture.is_some() {
-                material.create_bind_group(device);
+                material.create_bind_group(device, material_bind_group_layout);
             }
 
             materials.push(material);
@@ -167,7 +168,6 @@ impl Model {
                 name: "default".to_string(),
                 diffuse_texture: None,
                 bind_group: None,
-                bind_group_layout: None,
             });
         }
 
@@ -252,6 +252,7 @@ impl Model {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         path: &Path,
+        material_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<Self> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
@@ -314,13 +315,12 @@ impl Model {
                             name: "default".to_string(),
                             diffuse_texture: None,
                             bind_group: None,
-                            bind_group_layout: None,
                         };
 
                         if texture_path.exists() {
                             if let Ok(texture) = Texture::from_path(device, queue, &texture_path, Some("cube_texture")) {
                                 material.diffuse_texture = Some(texture);
-                                material.create_bind_group(device);
+                                material.create_bind_group(device, material_bind_group_layout);
                             }
                         }
 
@@ -344,7 +344,6 @@ impl Model {
                 name: "default".to_string(),
                 diffuse_texture: None,
                 bind_group: None,
-                bind_group_layout: None,
             });
         }
 

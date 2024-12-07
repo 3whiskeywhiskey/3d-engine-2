@@ -1,6 +1,7 @@
 use std::path::Path;
 use image::GenericImageView;
 use anyhow::Result;
+use wgpu::util::DeviceExt;
 
 pub struct Texture {
     pub texture: wgpu::Texture,
@@ -9,38 +10,6 @@ pub struct Texture {
 }
 
 impl Texture {
-    fn calculate_padded_bytes_per_row(width: u32) -> u32 {
-        let bytes_per_row = width * 4;
-        let align = 256;
-        (bytes_per_row + align - 1) & !(align - 1)
-    }
-
-    fn copy_texture_data(
-        data: &[u8],
-        dimensions: (u32, u32),
-        padded_bytes_per_row: u32,
-    ) -> Vec<u8> {
-        let unpadded_bytes_per_row = dimensions.0 * 4;
-        let total_size = (padded_bytes_per_row * dimensions.1) as usize;
-        let mut padded_data = vec![0; total_size];
-
-        for row in 0..dimensions.1 {
-            let src_start = (row * unpadded_bytes_per_row) as usize;
-            let src_end = src_start + unpadded_bytes_per_row as usize;
-            let dst_start = (row * padded_bytes_per_row) as usize;
-            let dst_end = dst_start + unpadded_bytes_per_row as usize;
-
-            if src_end <= data.len() && dst_end <= padded_data.len() {
-                padded_data[dst_start..dst_end].copy_from_slice(&data[src_start..src_end]);
-            } else {
-                log::warn!("Skipping row {} due to buffer size mismatch", row);
-                break;
-            }
-        }
-
-        padded_data
-    }
-
     pub fn from_path(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -48,9 +17,8 @@ impl Texture {
         label: Option<&str>,
     ) -> Result<Self> {
         let img = image::open(path)?;
-        let rgba = img.to_rgba8();
         let dimensions = img.dimensions();
-        let rgba_raw = rgba.as_raw();
+        let rgba = img.to_rgba8();
 
         let size = wgpu::Extent3d {
             width: dimensions.0,
@@ -65,25 +33,39 @@ impl Texture {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
 
-        let padded_bytes_per_row = Self::calculate_padded_bytes_per_row(dimensions.0);
-        let padded_data = Self::copy_texture_data(rgba_raw, dimensions, padded_bytes_per_row);
+        let bytes_per_row = dimensions.0 * 4;
+        let aligned_bytes_per_row = (bytes_per_row + 255) & !255;
+        let height = dimensions.1;
+        let data_size = aligned_bytes_per_row as usize * height as usize;
+        let mut aligned_data = vec![0u8; data_size];
+
+        for y in 0..height {
+            let src_start = (y * bytes_per_row) as usize;
+            let src_end = src_start + bytes_per_row as usize;
+            let dst_start = (y * aligned_bytes_per_row) as usize;
+            let dst_end = dst_start + bytes_per_row as usize;
+
+            if src_end <= rgba.as_raw().len() && dst_end <= aligned_data.len() {
+                aligned_data[dst_start..dst_end].copy_from_slice(&rgba.as_raw()[src_start..src_end]);
+            }
+        }
 
         queue.write_texture(
             wgpu::ImageCopyTexture {
-                aspect: wgpu::TextureAspect::All,
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
             },
-            &padded_data,
+            &aligned_data,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(padded_bytes_per_row),
-                rows_per_image: Some(dimensions.1),
+                bytes_per_row: Some(aligned_bytes_per_row),
+                rows_per_image: Some(height),
             },
             size,
         );
@@ -94,8 +76,8 @@ impl Texture {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 
@@ -126,25 +108,39 @@ impl Texture {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
 
-        let padded_bytes_per_row = Self::calculate_padded_bytes_per_row(dimensions.0);
-        let padded_data = Self::copy_texture_data(&image.pixels, dimensions, padded_bytes_per_row);
+        let bytes_per_row = dimensions.0 * 4;
+        let aligned_bytes_per_row = (bytes_per_row + 255) & !255;
+        let height = dimensions.1;
+        let data_size = aligned_bytes_per_row as usize * height as usize;
+        let mut aligned_data = vec![0u8; data_size];
+
+        for y in 0..height {
+            let src_start = (y * bytes_per_row) as usize;
+            let src_end = src_start + bytes_per_row as usize;
+            let dst_start = (y * aligned_bytes_per_row) as usize;
+            let dst_end = dst_start + bytes_per_row as usize;
+
+            if src_end <= image.pixels.len() && dst_end <= aligned_data.len() {
+                aligned_data[dst_start..dst_end].copy_from_slice(&image.pixels[src_start..src_end]);
+            }
+        }
 
         queue.write_texture(
             wgpu::ImageCopyTexture {
-                aspect: wgpu::TextureAspect::All,
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
             },
-            &padded_data,
+            &aligned_data,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(padded_bytes_per_row),
-                rows_per_image: Some(dimensions.1),
+                bytes_per_row: Some(aligned_bytes_per_row),
+                rows_per_image: Some(height),
             },
             size,
         );
@@ -167,7 +163,7 @@ impl Texture {
         })
     }
 
-    pub fn clone_with_device(&self, device: &wgpu::Device) -> Self {
+    pub fn clone_with_device(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
             size: self.texture.size(),
@@ -175,12 +171,42 @@ impl Texture {
             sample_count: self.texture.sample_count(),
             dimension: self.texture.dimension(),
             format: self.texture.format(),
-            usage: self.texture.usage(),
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
 
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Texture Copy Encoder"),
+        });
+
+        encoder.copy_texture_to_texture(
+            wgpu::ImageCopyTexture {
+                aspect: wgpu::TextureAspect::All,
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            wgpu::ImageCopyTexture {
+                aspect: wgpu::TextureAspect::All,
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            self.texture.size(),
+        );
+
+        queue.submit(Some(encoder.finish()));
+
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
 
         Self {
             texture,
