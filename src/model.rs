@@ -186,6 +186,68 @@ impl Texture {
             sampler,
         })
     }
+
+    pub fn from_gltf_image(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        image: &gltf::image::Data,
+        label: Option<&str>,
+    ) -> Result<Self> {
+        let rgba = image::load_from_memory(&image.pixels)?.to_rgba8();
+        let dimensions = (image.width, image.height);
+        
+        let size = wgpu::Extent3d {
+            width: dimensions.0,
+            height: dimensions.1,
+            depth_or_array_layers: 1,
+        };
+
+        let texture = device.create_texture(
+            &wgpu::TextureDescriptor {
+                label,
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            }
+        );
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                aspect: wgpu::TextureAspect::All,
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            &rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * dimensions.0),
+                rows_per_image: Some(dimensions.1),
+            },
+            size,
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        Ok(Self {
+            texture,
+            view,
+            sampler,
+        })
+    }
 }
 
 pub struct Material {
@@ -268,24 +330,46 @@ impl Model {
 
     fn load_gltf(
         device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        queue: &wgpu::Queue,
         path: &Path,
     ) -> Result<Self> {
-        let (document, buffers, _images) = gltf::import(path)?;
+        let (document, buffers, images) = gltf::import(path)?;
 
         let mut meshes = Vec::new();
         let mut materials = Vec::new();
 
         // Load materials first
         for material in document.materials() {
-            let _pbr = material.pbr_metallic_roughness();
+            let pbr = material.pbr_metallic_roughness();
             
-            materials.push(Material {
+            // Try to load the base color texture
+            let mut diffuse_texture = None;
+            if let Some(info) = pbr.base_color_texture() {
+                let texture = info.texture();
+                let source = texture.source().index();
+                if let Ok(texture) = Texture::from_gltf_image(
+                    device,
+                    queue,
+                    &images[source],
+                    Some(&format!("texture_{}", source))
+                ) {
+                    diffuse_texture = Some(texture);
+                }
+            }
+
+            let mut material = Material {
                 name: material.name().unwrap_or("").to_string(),
-                diffuse_texture: None, // TODO: Load textures
-                bind_group: None,      // TODO: Create bind group
+                diffuse_texture,
+                bind_group: None,
                 bind_group_layout: None,
-            });
+            };
+
+            // Create bind group if we have a texture
+            if material.diffuse_texture.is_some() {
+                material.create_bind_group(device);
+            }
+
+            materials.push(material);
         }
 
         // Ensure we have at least one material

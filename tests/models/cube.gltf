@@ -33,10 +33,31 @@
         {
             "name": "Material",
             "pbrMetallicRoughness": {
-                "baseColorFactor": [0.8, 0.8, 0.8, 1.0],
+                "baseColorTexture": {
+                    "index": 0
+                },
                 "metallicFactor": 0.0,
                 "roughnessFactor": 1.0
             }
+        }
+    ],
+    "textures": [
+        {
+            "source": 0,
+            "sampler": 0
+        }
+    ],
+    "images": [
+        {
+            "uri": "cube_texture.png"
+        }
+    ],
+    "samplers": [
+        {
+            "magFilter": 9729,
+            "minFilter": 9729,
+            "wrapS": 33071,
+            "wrapT": 33071
         }
     ],
     "accessors": [
