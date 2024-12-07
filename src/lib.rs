@@ -86,14 +86,14 @@ impl State {
         let model1 = Model::load(
             &device,
             &queue,
-            Path::new("assets/8b16ddeb-f011-4f13-bab7-615edd40aee9.glb"),
+            Path::new("assets/2c0f9e16-66c8-4891-bfb6-d79394ee56b8.glb"),
             &renderer.material_bind_group_layout,
         ).expect("Failed to load model 1");
 
         let model2 = Model::load(
             &device,
             &queue,
-            Path::new("assets/cb088356-1d69-41a5-b46d-4bc22aafa1b7.glb"),
+            Path::new("assets/f411cb1d-8c7f-4863-926a-40b8242bd166.glb"),
             &renderer.material_bind_group_layout,
         ).expect("Failed to load model 2");
 
