@@ -489,4 +489,35 @@ mod tests {
         // Once implemented, change this to assert!(result.is_ok());
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_load_glb_cube() {
+        let (device, queue) = create_test_device();
+        let model_path = test_models_path().join("cube.glb");
+        
+        let result = Model::load(&device, &queue, model_path);
+        assert!(result.is_ok(), "Failed to load GLB cube: {:?}", result.err());
+        
+        let model = result.unwrap();
+        assert_eq!(model.meshes.len(), 1, "Cube should have one mesh");
+        assert_eq!(model.materials.len(), 1, "Cube should have one material");
+        
+        let mesh = &model.meshes[0];
+        assert_eq!(mesh.num_elements, 36, "Cube should have 36 indices (12 triangles)");
+
+        // Additional checks specific to our cube data
+        let vertex_buffer_size = std::mem::size_of::<ModelVertex>() * 24; // 24 vertices
+        assert_eq!(
+            mesh.vertex_buffer.size(),
+            vertex_buffer_size as u64,
+            "Vertex buffer should contain 24 vertices"
+        );
+
+        let index_buffer_size = std::mem::size_of::<u32>() * 36; // 36 indices
+        assert_eq!(
+            mesh.index_buffer.size(),
+            index_buffer_size as u64,
+            "Index buffer should contain 36 indices"
+        );
+    }
 } 
