@@ -10,7 +10,7 @@ pub mod model;
 pub mod scene;
 
 use scene::{Scene, Renderer, camera::Camera, Transform};
-use model::Model;
+use model::{Model, ModelVertex};
 
 pub struct State {
     surface: wgpu::Surface<'static>,
@@ -76,11 +76,91 @@ impl State {
         surface.configure(&device, &config);
 
         let camera = Camera::new(
-            Vec3::new(0.0, 1.0, 2.0),
+            Vec3::new(0.0, 8.0, 16.0),
             size.width as f32 / size.height as f32,
         );
         let mut scene = Scene::new(camera);
         let renderer = Renderer::new(&device, &queue, &config);
+
+        // Add floor plane (20x20 meters)
+        let floor_vertices = vec![
+            ModelVertex { 
+                position: [-10.0, 0.0, -10.0], 
+                normal: [0.0, 1.0, 0.0], 
+                tex_coords: [0.0, 0.0],
+                tangent: [1.0, 0.0, 0.0, 1.0],
+            },
+            ModelVertex { 
+                position: [10.0, 0.0, -10.0], 
+                normal: [0.0, 1.0, 0.0], 
+                tex_coords: [1.0, 0.0],  // One full texture repeat across 20 meters
+                tangent: [1.0, 0.0, 0.0, 1.0],
+            },
+            ModelVertex { 
+                position: [10.0, 0.0, 10.0], 
+                normal: [0.0, 1.0, 0.0], 
+                tex_coords: [1.0, 1.0],
+                tangent: [1.0, 0.0, 0.0, 1.0],
+            },
+            ModelVertex { 
+                position: [-10.0, 0.0, 10.0], 
+                normal: [0.0, 1.0, 0.0], 
+                tex_coords: [0.0, 1.0],
+                tangent: [1.0, 0.0, 0.0, 1.0],
+            },
+        ];
+
+        let floor_indices = vec![0, 2, 1, 0, 3, 2];
+
+        // Create checkerboard texture
+        let texture_size = 512u32; // Larger texture for better quality
+        let texture_data = create_checkerboard_texture(texture_size);
+        
+        let floor_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Floor Texture"),
+            size: wgpu::Extent3d {
+                width: texture_size,
+                height: texture_size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            floor_texture.as_image_copy(),
+            &texture_data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * texture_size),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: texture_size,
+                height: texture_size,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let floor_texture_view = floor_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        
+        // Create floor model
+        let floor_model = Model::from_vertices(
+            &device,
+            &queue,
+            &floor_vertices,
+            &floor_indices,
+            floor_texture_view,
+            &renderer.material_bind_group_layout,
+        );
+
+        // Add floor to scene with identity transform
+        let floor_transform = Transform::new();
+        scene.add_object(floor_model, floor_transform);
 
         // Load test models
         let model1 = Model::load(
@@ -131,10 +211,10 @@ impl State {
         }
 
         // Set up more dramatic lighting
-        scene.set_ambient_light(0.05); // Reduce ambient light for more contrast
+        scene.set_ambient_light(0.3); // Increase ambient light
         scene.set_directional_light(
-            Vec3::new(1.0, 0.95, 0.8), // Slightly warm sunlight
-            Vec3::new(-1.0, -1.0, -1.0).normalize(), // Light coming from above and slightly behind
+            Vec3::new(1.0, 1.0, 1.0), // White light
+            Vec3::new(-0.5, -1.0, -0.5).normalize(), // Light coming from above and slightly to the side
         );
 
         Self {
@@ -169,4 +249,27 @@ impl State {
         frame.present();
         Ok(())
     }
+}
+
+fn create_checkerboard_texture(size: u32) -> Vec<u8> {
+    let mut data = Vec::with_capacity((size * size * 4) as usize);
+    let squares_per_side = 20; // We want 20x20 squares for our 20x20 meter floor
+    let square_size = size / squares_per_side;
+
+    for y in 0..size {
+        for x in 0..size {
+            let square_x = x / square_size;
+            let square_y = y / square_size;
+            let is_white = (square_x + square_y) % 2 == 0;
+            
+            let color = if is_white {
+                [200u8, 200u8, 200u8, 255u8] // Light gray
+            } else {
+                [120u8, 120u8, 120u8, 255u8] // Dark gray
+            };
+            
+            data.extend_from_slice(&color);
+        }
+    }
+    data
 } 
