@@ -1,9 +1,13 @@
 use winit::{
     event::*,
     window::Window,
+    keyboard::{KeyCode, PhysicalKey},
 };
 
 pub mod model;
+pub mod scene;
+
+use scene::{Scene, Renderer};
 
 pub struct State<'window> {
     surface: wgpu::Surface<'window>,
@@ -12,6 +16,8 @@ pub struct State<'window> {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     window: &'window Window,
+    scene: Scene,
+    renderer: Renderer,
 }
 
 impl<'window> State<'window> {
@@ -59,6 +65,9 @@ impl<'window> State<'window> {
 
         surface.configure(&device, &config);
 
+        let scene = Scene::new(size.width, size.height);
+        let renderer = Renderer::new(&device, &config);
+
         Self {
             surface,
             device,
@@ -66,6 +75,8 @@ impl<'window> State<'window> {
             config,
             size,
             window,
+            scene,
+            renderer,
         }
     }
 
@@ -79,28 +90,40 @@ impl<'window> State<'window> {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            self.scene.resize(new_size.width, new_size.height);
+            self.renderer.resize(&self.device, &self.config);
         }
     }
 
-    pub fn input(&mut self, _event: &WindowEvent) -> bool {
-        false
+    pub fn input(&mut self, event: &WindowEvent) -> bool {
+        match event {
+            WindowEvent::KeyboardInput { 
+                event: KeyEvent {
+                    state: ElementState::Pressed,
+                    physical_key: PhysicalKey::Code(KeyCode::Space),
+                    ..
+                },
+                ..
+            } => {
+                // Example: Reset camera position when space is pressed
+                self.scene.camera.position = glam::Vec3::new(0.0, 1.0, 2.0);
+                true
+            }
+            _ => false,
+        }
     }
 
     pub fn update(&mut self) {
-        // TODO: Add update logic
+        // Add any scene updates here
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
-        let _view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
         
-        let encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
-
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.renderer.render(&self.device, &self.queue, &view, &self.scene)?;
+        
         output.present();
-
         Ok(())
     }
 } 

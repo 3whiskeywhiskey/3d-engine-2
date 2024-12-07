@@ -3,60 +3,45 @@ use crate::model::{Model, ModelVertex};
 use pollster::FutureExt;
 use wgpu::{Instance, util::DeviceExt};
 use glam::Vec4Swizzles;
-use winit::{
-    event_loop::EventLoopBuilder,
-    window::WindowBuilder,
-};
-use std::sync::Arc;
 
-struct TestWindow {
-    window: Arc<winit::window::Window>,
-    surface: wgpu::Surface<'static>,
+struct TestContext {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    adapter: wgpu::Adapter,
 }
 
-impl TestWindow {
+impl TestContext {
     fn new() -> Self {
-        let event_loop = EventLoopBuilder::new().build().unwrap();
-        let window = Arc::new(WindowBuilder::new().build(&event_loop).unwrap());
         let instance = Instance::default();
         
-        // SAFETY: The window is owned by TestWindow and lives as long as the surface
-        let surface = unsafe {
-            instance.create_surface_unsafe(
-                wgpu::SurfaceTargetUnsafe::from_window(&*window).unwrap()
-            ).unwrap()
-        };
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            })
+            .block_on()
+            .expect("Failed to find an appropriate adapter");
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    memory_hints: Default::default(),
+                },
+                None,
+            )
+            .block_on()
+            .expect("Failed to create device");
 
         Self {
-            window,
-            surface,
+            device,
+            queue,
+            adapter,
         }
     }
-}
-
-fn create_test_device() -> (wgpu::Device, wgpu::Queue, TestWindow, wgpu::Adapter) {
-    let test_window = TestWindow::new();
-    let instance = Instance::default();
-    
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions::default())
-        .block_on()
-        .expect("Failed to find an appropriate adapter");
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-                memory_hints: Default::default(),
-            },
-            None,
-        )
-        .block_on()
-        .expect("Failed to create device");
-
-    (device, queue, test_window, adapter)
 }
 
 #[test]
@@ -91,8 +76,8 @@ fn test_camera_new() {
     assert_eq!(camera.position, Vec3::new(0.0, 1.0, 2.0));
     assert_eq!(camera.target, Vec3::ZERO);
     assert_eq!(camera.up, Vec3::Y);
-    assert_eq!(camera.aspect, 800.0 / 600.0);
-    assert_eq!(camera.fovy, 45.0);
+    assert!((camera.aspect - 800.0 / 600.0).abs() < f32::EPSILON);
+    assert!((camera.fovy - 45.0).abs() < f32::EPSILON);
     assert!(camera.znear > 0.0);
     assert!(camera.zfar > camera.znear);
 }
@@ -104,7 +89,11 @@ fn test_camera_view_projection() {
     
     // Test that the camera transforms a point at the origin
     let origin = view_proj.project_point3(Vec3::ZERO);
-    assert!(origin.z < 0.0); // Should be in front of the camera (negative z in view space)
+    // The camera is at (0, 1, 2) looking at (0, 0, 0)
+    // So the origin should be in front of the camera (negative z in view space)
+    // and below the camera (negative y in view space)
+    assert!(origin.z < 0.0, "Point should be in front of camera");
+    assert!(origin.y < 0.0, "Point should be below camera");
 }
 
 #[test]
@@ -118,11 +107,11 @@ fn test_scene_new() {
 
 #[test]
 fn test_scene_add_object() {
-    let (device, _queue, _test_window, _adapter) = create_test_device();
+    let ctx = TestContext::new();
     let mut scene = Scene::new(800, 600);
     
     // Create a simple test model (just a vertex buffer and index buffer)
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let vertex_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Test Vertex Buffer"),
         contents: bytemuck::cast_slice(&[ModelVertex {
             position: [0.0, 0.0, 0.0],
@@ -132,7 +121,7 @@ fn test_scene_add_object() {
         usage: wgpu::BufferUsages::VERTEX,
     });
 
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let index_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Test Index Buffer"),
         contents: bytemuck::cast_slice(&[0u32]),
         usage: wgpu::BufferUsages::INDEX,
@@ -163,27 +152,26 @@ fn test_scene_resize() {
     let original_aspect = scene.camera.aspect;
     
     scene.resize(1024, 768);
-    assert_eq!(scene.camera.aspect, 1024.0 / 768.0);
-    assert_ne!(scene.camera.aspect, original_aspect);
+    let new_aspect = 1024.0 / 768.0;
+    assert!((scene.camera.aspect - new_aspect).abs() < f32::EPSILON);
+    assert!((scene.camera.aspect - original_aspect).abs() > f32::EPSILON);
 }
 
 #[test]
 fn test_renderer_creation() {
-    let (device, _queue, test_window, adapter) = create_test_device();
+    let ctx = TestContext::new();
     
-    let surface_caps = test_window.surface.get_capabilities(&adapter);
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: surface_caps.formats[0],
+        format: wgpu::TextureFormat::Bgra8UnormSrgb,
         width: 800,
         height: 600,
-        present_mode: surface_caps.present_modes[0],
-        alpha_mode: surface_caps.alpha_modes[0],
+        present_mode: wgpu::PresentMode::Fifo,
+        alpha_mode: wgpu::CompositeAlphaMode::Auto,
         view_formats: vec![],
         desired_maximum_frame_latency: 2,
     };
 
-    let renderer = Renderer::new(&device, &config);
-    // Just verify that the pipeline was created
+    let renderer = Renderer::new(&ctx.device, &config);
     assert!(std::ptr::eq(&renderer.pipeline, &renderer.pipeline));
 } 
