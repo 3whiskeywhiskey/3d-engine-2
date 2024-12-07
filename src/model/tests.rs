@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use pollster::FutureExt;
 use wgpu::Instance;
 use assert_fs::prelude::*;
+use std::fs;
+use image::GenericImageView;
 
 fn create_test_device() -> (wgpu::Device, wgpu::Queue) {
     let instance = Instance::default();
@@ -153,4 +155,131 @@ fn test_material_bind_group() {
 
     material.create_bind_group(&device, &bind_group_layout);
     assert!(material.bind_group.is_some());
+}
+
+#[test]
+fn test_extract_glb_textures() {
+    // Create output directory if it doesn't exist
+    let output_dir = PathBuf::from("test_output/textures");
+    fs::create_dir_all(&output_dir).unwrap();
+
+    // Get all .glb files from assets directory
+    let assets_dir = PathBuf::from("assets");
+    for entry in fs::read_dir(assets_dir).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().map_or(false, |ext| ext == "glb") {
+            println!("Processing {:?}", path);
+            
+            // Import GLTF
+            let (document, buffers, _) = gltf::import(&path).unwrap();
+            
+            // Process each image in the GLTF
+            for (image_index, image) in document.images().enumerate() {
+                match image.source() {
+                    gltf::image::Source::View { view, mime_type } => {
+                        let parent_buffer = &buffers[view.buffer().index()];
+                        let begin = view.offset();
+                        let end = begin + view.length();
+                        let image_data = &parent_buffer[begin..end];
+
+                        // Determine image format and extension
+                        let extension = match mime_type {
+                            "image/jpeg" => "jpg",
+                            "image/png" => "png",
+                            _ => "bin",
+                        };
+
+                        // Create output filename
+                        let output_path = output_dir.join(format!(
+                            "{}_image_{}.{}",
+                            path.file_stem().unwrap().to_string_lossy(),
+                            image_index,
+                            extension
+                        ));
+
+                        // Write image data to file
+                        fs::write(&output_path, image_data).unwrap();
+                        println!("Extracted texture to {:?}", output_path);
+
+                        // Try to decode the image data and analyze it
+                        if let Ok(img) = image::load_from_memory(image_data) {
+                            let dimensions = img.dimensions();
+                            let color_type = img.color();
+                            println!("Image info:");
+                            println!("  Dimensions: {}x{}", dimensions.0, dimensions.1);
+                            println!("  Color type: {:?}", color_type);
+                            
+                            // Sample some pixels to verify data
+                            let pixels = [
+                                (0, 0),
+                                (dimensions.0 / 2, dimensions.1 / 2),
+                                (dimensions.0 - 1, dimensions.1 - 1)
+                            ];
+                            
+                            println!("  Sample pixels:");
+                            for (x, y) in pixels.iter() {
+                                let pixel = img.get_pixel(*x, *y);
+                                println!("    At ({}, {}): {:?}", x, y, pixel);
+                            }
+
+                            // Save as PNG for comparison
+                            let png_path = output_dir.join(format!(
+                                "{}_image_{}_decoded.png",
+                                path.file_stem().unwrap().to_string_lossy(),
+                                image_index
+                            ));
+                            img.save(&png_path).unwrap();
+                            println!("Saved decoded image to {:?}", png_path);
+                        } else {
+                            println!("Failed to decode image data!");
+                        }
+                    },
+                    gltf::image::Source::Uri { .. } => {
+                        println!("Skipping external image reference");
+                    },
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_load_test_texture() {
+    use std::path::PathBuf;
+    use image::GenericImageView;
+
+    // Load the test texture directly with image crate
+    let test_texture_path = PathBuf::from("tests/models/cube_texture.png");
+    let img = image::open(&test_texture_path).unwrap();
+    let dimensions = img.dimensions();
+    let rgba = img.to_rgba8();
+
+    println!("Test texture info:");
+    println!("  Dimensions: {}x{}", dimensions.0, dimensions.1);
+    println!("  Raw buffer size: {}", rgba.as_raw().len());
+    println!("  Expected buffer size: {}", dimensions.0 * dimensions.1 * 4);
+    println!("  Color type: {:?}", img.color());
+
+    // Sample some pixels
+    let pixels = [
+        (0, 0),
+        (dimensions.0 / 2, dimensions.1 / 2),
+        (dimensions.0 - 1, dimensions.1 - 1)
+    ];
+    
+    println!("  Sample pixels:");
+    for (x, y) in pixels.iter() {
+        let pixel = img.get_pixel(*x, *y);
+        println!("    At ({}, {}): {:?}", x, y, pixel);
+    }
+
+    // Now try loading with our Texture implementation
+    let (device, queue) = create_test_device();
+    let texture = Texture::from_path(&device, &queue, &test_texture_path, Some("test")).unwrap();
+    
+    // Verify texture dimensions
+    assert_eq!(texture.texture.size().width, dimensions.0);
+    assert_eq!(texture.texture.size().height, dimensions.1);
+    assert_eq!(texture.texture.size().depth_or_array_layers, 1);
 } 

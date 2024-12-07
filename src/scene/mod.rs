@@ -65,8 +65,7 @@ impl Camera {
             self.znear,
             self.zfar,
         );
-        let flip_y = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
-        flip_y * proj * view
+        proj * view
     }
 
     pub fn move_forward(&mut self, distance: f32) {

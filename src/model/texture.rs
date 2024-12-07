@@ -18,7 +18,6 @@ impl Texture {
     ) -> Result<Self> {
         let img = image::open(path)?;
         let dimensions = img.dimensions();
-        let rgba = img.to_rgba8();
 
         let size = wgpu::Extent3d {
             width: dimensions.0,
@@ -26,33 +25,19 @@ impl Texture {
             depth_or_array_layers: 1,
         };
 
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let rgba = img.to_rgba8();
+
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label,
             size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-
-        let bytes_per_row = dimensions.0 * 4;
-        let aligned_bytes_per_row = (bytes_per_row + 255) & !255;
-        let height = dimensions.1;
-        let data_size = aligned_bytes_per_row as usize * height as usize;
-        let mut aligned_data = vec![0u8; data_size];
-
-        for y in 0..height {
-            let src_start = (y * bytes_per_row) as usize;
-            let src_end = src_start + bytes_per_row as usize;
-            let dst_start = (y * aligned_bytes_per_row) as usize;
-            let dst_end = dst_start + bytes_per_row as usize;
-
-            if src_end <= rgba.as_raw().len() && dst_end <= aligned_data.len() {
-                aligned_data[dst_start..dst_end].copy_from_slice(&rgba.as_raw()[src_start..src_end]);
-            }
-        }
 
         queue.write_texture(
             wgpu::ImageCopyTexture {
@@ -61,11 +46,11 @@ impl Texture {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &aligned_data,
+            &rgba,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(aligned_bytes_per_row),
-                rows_per_image: Some(height),
+                bytes_per_row: Some(4 * dimensions.0),
+                rows_per_image: Some(dimensions.1),
             },
             size,
         );
@@ -101,33 +86,29 @@ impl Texture {
             depth_or_array_layers: 1,
         };
 
+        // Convert RGB to RGBA if needed
+        let (pixels, bytes_per_row) = if image.pixels.len() == (dimensions.0 * dimensions.1 * 3) as usize {
+            println!("Converting RGB to RGBA");
+            let mut rgba = Vec::with_capacity((dimensions.0 * dimensions.1 * 4) as usize);
+            for chunk in image.pixels.chunks(3) {
+                rgba.extend_from_slice(chunk);
+                rgba.push(255); // Alpha channel
+            }
+            (rgba, 4 * dimensions.0)
+        } else {
+            (image.pixels.to_vec(), 4 * dimensions.0)
+        };
+
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label,
             size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-
-        let bytes_per_row = dimensions.0 * 4;
-        let aligned_bytes_per_row = (bytes_per_row + 255) & !255;
-        let height = dimensions.1;
-        let data_size = aligned_bytes_per_row as usize * height as usize;
-        let mut aligned_data = vec![0u8; data_size];
-
-        for y in 0..height {
-            let src_start = (y * bytes_per_row) as usize;
-            let src_end = src_start + bytes_per_row as usize;
-            let dst_start = (y * aligned_bytes_per_row) as usize;
-            let dst_end = dst_start + bytes_per_row as usize;
-
-            if src_end <= image.pixels.len() && dst_end <= aligned_data.len() {
-                aligned_data[dst_start..dst_end].copy_from_slice(&image.pixels[src_start..src_end]);
-            }
-        }
 
         queue.write_texture(
             wgpu::ImageCopyTexture {
@@ -136,11 +117,11 @@ impl Texture {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &aligned_data,
+            &pixels,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(aligned_bytes_per_row),
-                rows_per_image: Some(height),
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(dimensions.1),
             },
             size,
         );

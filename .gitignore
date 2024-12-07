@@ -13,3 +13,4 @@ Cargo.lock
 # Python cache files
 __pycache__/
 *.py[cod]
+test_output
