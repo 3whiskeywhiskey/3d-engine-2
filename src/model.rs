@@ -147,14 +147,110 @@ impl Model {
     }
 
     fn load_gltf(
-        _device: &wgpu::Device,
+        device: &wgpu::Device,
         _queue: &wgpu::Queue,
         path: &Path,
     ) -> Result<Self> {
-        let (_document, _buffers, _images) = gltf::import(path)?;
-        
-        // TODO: Implement GLTF loading
-        todo!("Implement GLTF loading")
+        let (document, buffers, _images) = gltf::import(path)?;
+
+        let mut meshes = Vec::new();
+        let mut materials = Vec::new();
+
+        // Load materials first
+        for material in document.materials() {
+            let _pbr = material.pbr_metallic_roughness();
+            
+            materials.push(Material {
+                name: material.name().unwrap_or("").to_string(),
+                diffuse_texture: None, // TODO: Load textures
+                bind_group: None,      // TODO: Create bind group
+            });
+        }
+
+        // Ensure we have at least one material
+        if materials.is_empty() {
+            materials.push(Material {
+                name: "default".to_string(),
+                diffuse_texture: None,
+                bind_group: None,
+            });
+        }
+
+        // Process meshes
+        for mesh in document.meshes() {
+            for primitive in mesh.primitives() {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                
+                // Get vertex positions
+                let positions: Vec<[f32; 3]> = reader
+                    .read_positions()
+                    .ok_or_else(|| anyhow::anyhow!("No position data"))?
+                    .collect();
+
+                // Get vertex normals (or generate default)
+                let normals: Vec<[f32; 3]> = reader
+                    .read_normals()
+                    .map(|iter| iter.collect())
+                    .unwrap_or_else(|| vec![[0.0, 1.0, 0.0]; positions.len()]);
+
+                // Get texture coordinates (or generate default)
+                let tex_coords: Vec<[f32; 2]> = reader
+                    .read_tex_coords(0)
+                    .map(|iter| iter.into_f32().collect())
+                    .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
+
+                // Get indices
+                let indices: Vec<u32> = reader
+                    .read_indices()
+                    .map(|iter| iter.into_u32().collect())
+                    .ok_or_else(|| anyhow::anyhow!("No index data"))?;
+
+                // Create vertices
+                let vertices: Vec<ModelVertex> = positions
+                    .iter()
+                    .zip(tex_coords.iter())
+                    .zip(normals.iter())
+                    .map(|((pos, tex), norm)| ModelVertex {
+                        position: *pos,
+                        tex_coords: *tex,
+                        normal: *norm,
+                    })
+                    .collect();
+
+                // Create vertex buffer
+                let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Mesh Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+                // Create index buffer
+                let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Mesh Index Buffer"),
+                    contents: bytemuck::cast_slice(&indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+
+                // Create mesh
+                meshes.push(Mesh {
+                    name: mesh.name().unwrap_or("").to_string(),
+                    vertex_buffer,
+                    index_buffer,
+                    num_elements: indices.len() as u32,
+                    material_index: primitive.material().index().unwrap_or(0),
+                });
+            }
+        }
+
+        // If no meshes were found, return an error
+        if meshes.is_empty() {
+            return Err(anyhow::anyhow!("No meshes found in GLTF file"));
+        }
+
+        Ok(Self {
+            meshes,
+            materials,
+        })
     }
 
     fn load_obj(
