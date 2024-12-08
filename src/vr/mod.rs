@@ -72,11 +72,19 @@ pub struct ViewProjection {
     pub pose: xr::Posef,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
+pub struct FrameResources {
+    pub frame_state: xr::FrameState,
+    pub view_projections: Vec<ViewProjection>,
+}
+
+#[derive(Debug)]
 pub enum SessionState {
     Idle,
     Ready,
-    Running,
+    Running {
+        resources: FrameResources,
+    },
     Stopping,
     Stopped,
 }
@@ -388,7 +396,17 @@ impl VRSystem {
                                 self.session_state = SessionState::Stopping;
                             }
                             xr::SessionState::SYNCHRONIZED => {
-                                self.session_state = SessionState::Running;
+                                let frame_state = xr::FrameState {
+                                    predicted_display_time: xr::Time::from_nanos(0),
+                                    predicted_display_period: xr::Duration::from_nanos(0),
+                                    should_render: true,
+                                };
+                                self.session_state = SessionState::Running {
+                                    resources: FrameResources {
+                                        frame_state,
+                                        view_projections: Vec::new(),
+                                    },
+                                };
                             }
                             xr::SessionState::IDLE => {
                                 self.session_state = SessionState::Idle;
@@ -404,7 +422,7 @@ impl VRSystem {
     }
 
     pub fn is_session_running(&self) -> bool {
-        self.session_state == SessionState::Running
+        matches!(self.session_state, SessionState::Running { .. })
     }
 }
 
