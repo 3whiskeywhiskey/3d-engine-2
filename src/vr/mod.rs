@@ -3,33 +3,65 @@ use openxr as xr;
 use wgpu;
 use glam::{Mat4, Vec3, Quat};
 use std::ffi::c_void;
+use wgpu::hal::api::Vulkan;
 
 mod pipeline;
 use pipeline::{VRPipeline, VRUniform};
 
-// Add Vulkan extraction functions
-fn get_vulkan_instance_from_wgpu(_device: &wgpu::Device) -> Result<*const c_void> {
-    // For now, we'll return a null pointer since we can't safely extract the Vulkan instance
-    // TODO: Implement proper Vulkan instance extraction
-    Ok(std::ptr::null())
+fn get_vulkan_instance_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
+    unsafe {
+        device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
+            let _vulkan_device = vulkan_device
+                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
+            
+            // Get the instance handle
+            // TODO: Implement proper Vulkan instance extraction
+            Ok(std::ptr::null())
+        })
+        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan instance"))?
+    }
 }
 
-fn get_vulkan_physical_device_from_wgpu(_device: &wgpu::Device) -> Result<*const c_void> {
-    // For now, we'll return a null pointer since we can't safely extract the Vulkan physical device
-    // TODO: Implement proper Vulkan physical device extraction
-    Ok(std::ptr::null())
+fn get_vulkan_physical_device_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
+    unsafe {
+        device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
+            let _vulkan_device = vulkan_device
+                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
+            
+            // Get the physical device handle
+            // TODO: Implement proper Vulkan physical device extraction
+            Ok(std::ptr::null())
+        })
+        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan physical device"))?
+    }
 }
 
-fn get_vulkan_device_from_wgpu(_device: &wgpu::Device) -> Result<*const c_void> {
-    // For now, we'll return a null pointer since we can't safely extract the Vulkan device
-    // TODO: Implement proper Vulkan device extraction
-    Ok(std::ptr::null())
+fn get_vulkan_device_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
+    unsafe {
+        device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
+            let _vulkan_device = vulkan_device
+                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
+            
+            // Get the device handle
+            // TODO: Implement proper Vulkan device extraction
+            Ok(std::ptr::null())
+        })
+        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?
+    }
 }
 
-fn get_vulkan_queue_info_from_wgpu(_device: &wgpu::Device) -> Result<(u32, u32)> {
-    // For now, we'll use the first queue family and queue
-    // TODO: Implement proper queue family and index extraction
-    Ok((0, 0))
+fn get_vulkan_queue_info_from_wgpu(device: &wgpu::Device) -> Result<(u32, u32)> {
+    unsafe {
+        device.as_hal::<Vulkan, _, Result<(u32, u32)>>(|vulkan_device| {
+            let _vulkan_device = vulkan_device
+                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
+            
+            // For now, we'll use the first queue family and queue
+            // TODO: Get actual queue family and index from the queue
+            Ok((0, 0))
+        })
+        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan queue info"))?
+    }
 }
 
 #[derive(Debug)]
