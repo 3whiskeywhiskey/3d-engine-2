@@ -9,6 +9,8 @@ pub struct VRUniform {
     pub view_proj: [[f32; 4]; 4],
     pub view: [[f32; 4]; 4],
     pub proj: [[f32; 4]; 4],
+    pub eye_position: [f32; 3],
+    pub _padding: u32,
 }
 
 pub struct VRPipeline {

@@ -232,6 +232,12 @@ impl VRSystem {
                 view_proj: view_proj.projection.mul_mat4(&view_proj.view).to_cols_array_2d(),
                 view: view_proj.view.to_cols_array_2d(),
                 proj: view_proj.projection.to_cols_array_2d(),
+                eye_position: [
+                    view_proj.pose.position.x,
+                    view_proj.pose.position.y,
+                    view_proj.pose.position.z,
+                ],
+                _padding: 0,
             };
             pipeline.update_uniform(queue, &uniform);
             Ok(())
