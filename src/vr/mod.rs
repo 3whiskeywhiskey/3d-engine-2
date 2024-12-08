@@ -13,6 +13,9 @@ pub struct VRSystem {
     instance: xr::Instance,
     system: xr::SystemId,
     session: Option<xr::Session<xr::Vulkan>>,
+    frame_waiter: Option<xr::FrameWaiter>,
+    frame_stream: Option<xr::FrameStream<xr::Vulkan>>,
+    swapchain: Option<xr::Swapchain<xr::Vulkan>>,
     stage: Option<xr::Space>,
     view_configuration: Option<xr::ViewConfigurationProperties>,
     views: Option<Vec<xr::ViewConfigurationView>>,
@@ -48,15 +51,18 @@ impl VRSystem {
             instance,
             system,
             session: None,
+            frame_waiter: None,
+            frame_stream: None,
+            swapchain: None,
             stage: None,
             view_configuration: None,
             views: None,
         })
     }
 
-    pub fn initialize_session(&mut self, device: &wgpu::Device) -> Result<()> {
+    pub fn initialize_session(&mut self, _device: &wgpu::Device) -> Result<()> {
         // Get system properties for Vulkan device creation
-        let requirements = self.instance.graphics_requirements::<xr::Vulkan>(self.system)?;
+        let _requirements = self.instance.graphics_requirements::<xr::Vulkan>(self.system)?;
         
         // TODO: We need to properly get these from wgpu/Vulkan
         // For now, we'll use placeholder values that should work with most systems
@@ -93,11 +99,78 @@ impl VRSystem {
             xr::Posef::IDENTITY,
         )?;
 
-        // Store session and stage
+        // Create swapchain
+        if let Some(views) = &self.views {
+            let swapchain = session.create_swapchain(&xr::SwapchainCreateInfo {
+                create_flags: xr::SwapchainCreateFlags::EMPTY,
+                usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
+                    | xr::SwapchainUsageFlags::SAMPLED,
+                format: 87, // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
+                sample_count: 1,
+                width: views[0].recommended_image_rect_width,
+                height: views[0].recommended_image_rect_height,
+                face_count: 1,
+                array_size: 2,  // One for each eye
+                mip_count: 1,
+            })?;
+            self.swapchain = Some(swapchain);
+        }
+
+        // Store session components
         self.session = Some(session);
+        self.frame_waiter = Some(frame_waiter);
+        self.frame_stream = Some(frame_stream);
         self.stage = Some(stage);
 
         Ok(())
+    }
+
+    pub fn begin_frame(&mut self) -> Result<xr::FrameState> {
+        if let (Some(frame_waiter), Some(frame_stream)) = (&mut self.frame_waiter, &mut self.frame_stream) {
+            frame_waiter.wait()?;
+            let frame_state = xr::FrameState {
+                predicted_display_time: xr::Time::from_nanos(0),  // We'll get the actual time from the runtime later
+                predicted_display_period: xr::Duration::from_nanos(0),
+                should_render: true,  // We'll assume we should always render for now
+            };
+            frame_stream.begin().map_err(|e| anyhow::anyhow!("Failed to begin frame: {:?}", e))?;
+            Ok(frame_state)
+        } else {
+            Err(anyhow::anyhow!("Frame waiter or stream not initialized"))
+        }
+    }
+
+    pub fn acquire_swapchain_image(&mut self) -> Result<u32> {
+        if let Some(swapchain) = &mut self.swapchain {
+            let image_index = swapchain.acquire_image()?;
+            swapchain.wait_image(xr::Duration::from_nanos(100_000_000))?;
+            Ok(image_index)
+        } else {
+            Err(anyhow::anyhow!("Swapchain not initialized"))
+        }
+    }
+
+    pub fn release_swapchain_image(&mut self) -> Result<()> {
+        if let Some(swapchain) = &mut self.swapchain {
+            swapchain.release_image()?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Swapchain not initialized"))
+        }
+    }
+
+    pub fn end_frame(&mut self, frame_state: xr::FrameState, views: &[xr::CompositionLayerProjectionView<xr::Vulkan>]) -> Result<()> {
+        if let (Some(frame_stream), Some(stage)) = (&mut self.frame_stream, &self.stage) {
+            let projection_layer = xr::CompositionLayerProjection::new().space(stage).views(views);
+            frame_stream.end(
+                frame_state.predicted_display_time,
+                xr::EnvironmentBlendMode::OPAQUE,
+                &[&projection_layer],
+            )?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Frame stream not initialized"))
+        }
     }
 
     pub fn is_hmd_available(&self) -> bool {

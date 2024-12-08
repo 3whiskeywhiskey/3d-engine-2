@@ -180,10 +180,20 @@ impl Renderer {
     }
 
     fn render_vr(&mut self, vr: &mut VRSystem) -> Result<()> {
-        // Create command encoder
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("VR Render Encoder"),
-        });
+        // Begin VR frame
+        let frame_state = vr.begin_frame()?;
+        
+        if !frame_state.should_render {
+            // If we shouldn't render this frame, end it early
+            vr.end_frame(frame_state, &[])?;
+            return Ok(());
+        }
+
+        // Get view transforms for both eyes
+        let view_projections = vr.get_view_projections(&frame_state)?;
+        
+        // Acquire swapchain image
+        let image_index = vr.acquire_swapchain_image()?;
 
         // Get swapchain image layout
         let (width, height) = vr.get_swapchain_image_layout()
@@ -192,8 +202,17 @@ impl Renderer {
         // Create depth texture for VR
         let (_, depth_view) = Self::create_depth_texture(&self.device, width, height);
 
-        // Create texture view for each eye
-        for i in 0..2 {
+        // Create command encoder
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("VR Render Encoder"),
+        });
+
+        // Create projection views for composition
+        let mut projection_views = Vec::new();
+
+        // Render for each eye
+        for (i, view_proj) in view_projections.iter().enumerate() {
+            // Create texture view for this eye
             let view_attachment = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(&format!("VR Eye {} Texture", i)),
                 size: wgpu::Extent3d {
@@ -238,12 +257,52 @@ impl Renderer {
                     }),
                 });
 
-                // TODO: Add actual rendering commands here
+                // TODO: Add actual rendering commands here using view_proj.view and view_proj.projection
             }
+
+            // Create projection view for this eye
+            let projection_view = xr::CompositionLayerProjectionView::new()
+                .pose(xr::Posef {
+                    orientation: xr::Quaternionf {
+                        x: view_proj.view.x_axis.x,
+                        y: view_proj.view.x_axis.y,
+                        z: view_proj.view.x_axis.z,
+                        w: 1.0,
+                    },
+                    position: xr::Vector3f {
+                        x: view_proj.view.w_axis.x,
+                        y: view_proj.view.w_axis.y,
+                        z: view_proj.view.w_axis.z,
+                    },
+                })
+                .fov(xr::Fovf {
+                    angle_left: -1.0,  // TODO: Calculate proper FoV angles from projection matrix
+                    angle_right: 1.0,
+                    angle_up: 1.0,
+                    angle_down: -1.0,
+                })
+                .sub_image(xr::SwapchainSubImage::new()
+                    .swapchain(vr.swapchain.as_ref().unwrap())
+                    .image_array_index(i as u32)
+                    .image_rect(xr::Rect2Di {
+                        offset: xr::Offset2Di { x: 0, y: 0 },
+                        extent: xr::Extent2Di {
+                            width: width as i32,
+                            height: height as i32,
+                        },
+                    }));
+
+            projection_views.push(projection_view);
         }
 
         // Submit command buffer
         self.queue.submit(std::iter::once(encoder.finish()));
+
+        // Release swapchain image
+        vr.release_swapchain_image()?;
+
+        // End frame with projection views
+        vr.end_frame(frame_state, &projection_views)?;
 
         Ok(())
     }
