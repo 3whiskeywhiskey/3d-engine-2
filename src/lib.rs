@@ -1,8 +1,5 @@
 use std::sync::Arc;
-use winit::{
-    event_loop::EventLoop,
-    window::Window,
-};
+use winit::window::Window;
 use glam::Vec3;
 use std::path::Path;
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::{Model, ModelVertex};
+use crate::model::Model;
 use pollster::FutureExt;
 use wgpu::{Instance, util::DeviceExt};
 use glam::Vec4Swizzles;
@@ -7,6 +7,7 @@ use glam::Vec4Swizzles;
 struct TestContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    #[allow(dead_code)]  // Kept for future use
     adapter: wgpu::Adapter,
 }
 
@@ -194,7 +195,7 @@ gpu_test!(test_renderer_creation, |context: TestContext| {
         desired_maximum_frame_latency: 2,
     };
 
-    let renderer = Renderer::new(&context.device, &context.queue, &config);
+    let _renderer = Renderer::new(&context.device, &context.queue, &config);
     // Just verify that we can create the renderer without panicking
     assert!(true);
 }); 

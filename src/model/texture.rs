@@ -1,7 +1,6 @@
 use std::path::Path;
 use image::GenericImageView;
 use anyhow::Result;
-use wgpu::util::DeviceExt;
 
 pub struct Texture {
     pub texture: wgpu::Texture,

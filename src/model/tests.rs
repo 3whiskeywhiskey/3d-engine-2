@@ -1,9 +1,9 @@
 use super::*;
 use std::path::PathBuf;
+use std::fs;
 use pollster::FutureExt;
 use wgpu::Instance;
 use assert_fs::prelude::*;
-use std::fs;
 use image::GenericImageView;
 
 fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {

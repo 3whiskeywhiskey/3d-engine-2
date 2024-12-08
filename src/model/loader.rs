@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::io::{BufReader, BufRead};
 use std::fs::File;
-use std::collections::HashMap;
 use anyhow::Result;
 use wgpu::util::DeviceExt;
 
@@ -307,7 +306,7 @@ impl Model {
 
     fn load_obj(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        _queue: &wgpu::Queue,
         path: &Path,
         material_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<Self> {
@@ -403,5 +402,25 @@ impl Model {
             bounds_min: overall_min,
             bounds_max: overall_max,
         })
+    }
+
+    pub fn extract_glb_textures(
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        _data: &[u8],
+        _material_bind_group_layout: &wgpu::BindGroupLayout,
+    ) -> Result<Vec<Material>> {
+        // Implementation for extracting textures from GLB
+        unimplemented!()
+    }
+
+    pub fn load_texture(
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        _path: &Path,
+        _label: Option<&str>,
+    ) -> Result<Texture> {
+        // Implementation for loading texture
+        unimplemented!()
     }
 } 
