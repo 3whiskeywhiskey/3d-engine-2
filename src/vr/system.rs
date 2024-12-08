@@ -11,12 +11,7 @@ use super::vulkan::{
     get_vulkan_queue_info_from_wgpu,
     wgpu_format_to_vulkan,
 };
-
-#[derive(Debug)]
-pub struct FrameResources {
-    pub frame_state: xr::FrameState,
-    pub view_projections: Vec<ViewProjection>,
-}
+use super::frame::{FrameManager, FrameResources};
 
 #[derive(Debug)]
 pub enum SessionState {
@@ -32,13 +27,8 @@ pub enum SessionState {
 pub struct VRSystem {
     instance: xr::Instance,
     system: xr::SystemId,
-    session: Option<xr::Session<xr::Vulkan>>,
-    frame_waiter: Option<xr::FrameWaiter>,
-    frame_stream: Option<xr::FrameStream<xr::Vulkan>>,
-    swapchain: Option<xr::Swapchain<xr::Vulkan>>,
-    stage: Option<xr::Space>,
+    frame_manager: Option<FrameManager>,
     view_configuration: Option<xr::ViewConfigurationProperties>,
-    views: Option<Vec<xr::ViewConfigurationView>>,
     swapchain_format: wgpu::TextureFormat,
     pipeline: Option<VRPipeline>,
     session_state: SessionState,
@@ -73,13 +63,8 @@ impl VRSystem {
         Ok(Self {
             instance,
             system,
-            session: None,
-            frame_waiter: None,
-            frame_stream: None,
-            swapchain: None,
-            stage: None,
+            frame_manager: None,
             view_configuration: None,
-            views: None,
             swapchain_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             pipeline: None,
             session_state: SessionState::Idle,
@@ -115,10 +100,10 @@ impl VRSystem {
             xr::ViewConfigurationType::PRIMARY_STEREO,
         )?);
 
-        self.views = Some(self.instance.enumerate_view_configuration_views(
+        let views = self.instance.enumerate_view_configuration_views(
             self.system,
             xr::ViewConfigurationType::PRIMARY_STEREO,
-        )?);
+        )?;
 
         // Create reference space
         let stage = session.create_reference_space(
@@ -127,21 +112,18 @@ impl VRSystem {
         )?;
 
         // Create swapchain
-        if let Some(views) = &self.views {
-            let swapchain = session.create_swapchain(&xr::SwapchainCreateInfo {
-                create_flags: xr::SwapchainCreateFlags::EMPTY,
-                usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
-                    | xr::SwapchainUsageFlags::SAMPLED,
-                format: wgpu_format_to_vulkan(self.swapchain_format),
-                sample_count: 1,
-                width: views[0].recommended_image_rect_width,
-                height: views[0].recommended_image_rect_height,
-                face_count: 1,
-                array_size: 2,  // One for each eye
-                mip_count: 1,
-            })?;
-            self.swapchain = Some(swapchain);
-        }
+        let swapchain = session.create_swapchain(&xr::SwapchainCreateInfo {
+            create_flags: xr::SwapchainCreateFlags::EMPTY,
+            usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
+                | xr::SwapchainUsageFlags::SAMPLED,
+            format: wgpu_format_to_vulkan(self.swapchain_format),
+            sample_count: 1,
+            width: views[0].recommended_image_rect_width,
+            height: views[0].recommended_image_rect_height,
+            face_count: 1,
+            array_size: 2,  // One for each eye
+            mip_count: 1,
+        })?;
 
         // Create pipeline
         self.pipeline = Some(VRPipeline::new(
@@ -150,60 +132,43 @@ impl VRSystem {
             wgpu::TextureFormat::Depth32Float,
         ));
 
-        // Store session components
-        self.session = Some(session);
-        self.frame_waiter = Some(frame_waiter);
-        self.frame_stream = Some(frame_stream);
-        self.stage = Some(stage);
+        // Initialize frame manager
+        let mut frame_manager = FrameManager::new();
+        frame_manager.initialize(session, frame_waiter, frame_stream, swapchain, stage, views);
+        self.frame_manager = Some(frame_manager);
 
         Ok(())
     }
 
     pub fn begin_frame(&mut self) -> Result<xr::FrameState> {
-        if let (Some(frame_waiter), Some(frame_stream)) = (&mut self.frame_waiter, &mut self.frame_stream) {
-            frame_waiter.wait()?;
-            let frame_state = xr::FrameState {
-                predicted_display_time: xr::Time::from_nanos(0),  // We'll get the actual time from the runtime later
-                predicted_display_period: xr::Duration::from_nanos(0),
-                should_render: true,  // We'll assume we should always render for now
-            };
-            frame_stream.begin().map_err(|e| anyhow::anyhow!("Failed to begin frame: {:?}", e))?;
-            Ok(frame_state)
+        if let Some(frame_manager) = &mut self.frame_manager {
+            frame_manager.begin_frame()
         } else {
-            Err(anyhow::anyhow!("Frame waiter or stream not initialized"))
+            Err(anyhow::anyhow!("Frame manager not initialized"))
         }
     }
 
     pub fn acquire_swapchain_image(&mut self) -> Result<u32> {
-        if let Some(swapchain) = &mut self.swapchain {
-            let image_index = swapchain.acquire_image()?;
-            swapchain.wait_image(xr::Duration::from_nanos(100_000_000))?;
-            Ok(image_index)
+        if let Some(frame_manager) = &mut self.frame_manager {
+            frame_manager.acquire_swapchain_image()
         } else {
-            Err(anyhow::anyhow!("Swapchain not initialized"))
+            Err(anyhow::anyhow!("Frame manager not initialized"))
         }
     }
 
     pub fn release_swapchain_image(&mut self) -> Result<()> {
-        if let Some(swapchain) = &mut self.swapchain {
-            swapchain.release_image()?;
-            Ok(())
+        if let Some(frame_manager) = &mut self.frame_manager {
+            frame_manager.release_swapchain_image()
         } else {
-            Err(anyhow::anyhow!("Swapchain not initialized"))
+            Err(anyhow::anyhow!("Frame manager not initialized"))
         }
     }
 
     pub fn end_frame(&mut self, frame_state: xr::FrameState, views: &[xr::CompositionLayerProjectionView<xr::Vulkan>]) -> Result<()> {
-        if let (Some(frame_stream), Some(stage)) = (&mut self.frame_stream, &self.stage) {
-            let projection_layer = xr::CompositionLayerProjection::new().space(stage).views(views);
-            frame_stream.end(
-                frame_state.predicted_display_time,
-                xr::EnvironmentBlendMode::OPAQUE,
-                &[&projection_layer],
-            )?;
-            Ok(())
+        if let Some(frame_manager) = &mut self.frame_manager {
+            frame_manager.end_frame(frame_state, views)
         } else {
-            Err(anyhow::anyhow!("Frame stream not initialized"))
+            Err(anyhow::anyhow!("Frame manager not initialized"))
         }
     }
 
@@ -230,37 +195,23 @@ impl VRSystem {
     }
 
     pub fn get_views(&mut self, frame_state: &xr::FrameState) -> Result<Vec<xr::View>> {
-        if let (Some(session), Some(stage)) = (&self.session, &self.stage) {
-            let (_, views) = session.locate_views(
-                xr::ViewConfigurationType::PRIMARY_STEREO,
-                frame_state.predicted_display_time,
-                stage,
-            )?;
-            Ok(views)
+        if let Some(frame_manager) = &self.frame_manager {
+            frame_manager.get_views(frame_state)
         } else {
-            Err(anyhow::anyhow!("Session or stage not initialized"))
+            Err(anyhow::anyhow!("Frame manager not initialized"))
         }
     }
 
     pub fn get_view_projections(&mut self, frame_state: &xr::FrameState) -> Result<Vec<ViewProjection>> {
-        let views = self.get_views(frame_state)?;
-        
-        let mut view_projections = Vec::new();
-        for view in views {
-            view_projections.push(ViewProjection::from_xr_view(&view, 0.001));  // Near plane = 0.001
+        if let Some(frame_manager) = &self.frame_manager {
+            frame_manager.get_view_projections(frame_state)
+        } else {
+            Err(anyhow::anyhow!("Frame manager not initialized"))
         }
-
-        Ok(view_projections)
     }
 
     pub fn get_swapchain_image_layout(&self) -> Option<(u32, u32)> {
-        self.views.as_ref().map(|views| {
-            let view = &views[0];  // Both eyes use the same resolution
-            (
-                view.recommended_image_rect_width,
-                view.recommended_image_rect_height,
-            )
-        })
+        self.frame_manager.as_ref().and_then(|fm| fm.get_swapchain_image_layout())
     }
 
     pub fn get_swapchain_format(&self) -> wgpu::TextureFormat {
@@ -290,19 +241,25 @@ impl VRSystem {
     }
 
     pub fn update_session_state(&mut self) -> Result<()> {
-        if let Some(session) = &self.session {
+        if let Some(frame_manager) = &self.frame_manager {
             let mut event_storage = xr::EventDataBuffer::new();
             while let Some(event) = self.instance.poll_event(&mut event_storage)? {
                 match event {
                     xr::Event::SessionStateChanged(state_event) => {
                         match state_event.state() {
                             xr::SessionState::READY => {
-                                session.begin(xr::ViewConfigurationType::PRIMARY_STEREO)?;
-                                self.session_state = SessionState::Ready;
+                                // Begin session
+                                if let Some(session) = frame_manager.get_session() {
+                                    session.begin(xr::ViewConfigurationType::PRIMARY_STEREO)?;
+                                    self.session_state = SessionState::Ready;
+                                }
                             }
                             xr::SessionState::STOPPING => {
-                                session.end()?;
-                                self.session_state = SessionState::Stopping;
+                                // End session
+                                if let Some(session) = frame_manager.get_session() {
+                                    session.end()?;
+                                    self.session_state = SessionState::Stopping;
+                                }
                             }
                             xr::SessionState::SYNCHRONIZED => {
                                 let frame_state = xr::FrameState {

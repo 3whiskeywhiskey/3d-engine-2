@@ -14,7 +14,10 @@ pub use vulkan::{
 };
 
 mod system;
-pub use system::{VRSystem, SessionState, FrameResources};
+pub use system::{VRSystem, SessionState};
+
+mod frame;
+pub use frame::FrameResources;
 
 #[cfg(test)]
 mod tests {
