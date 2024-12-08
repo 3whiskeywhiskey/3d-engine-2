@@ -29,7 +29,11 @@ impl State {
 
         println!("Creating WGPU instance...");
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN,
+            backends: if cfg!(target_os = "macos") {
+                wgpu::Backends::METAL
+            } else {
+                wgpu::Backends::VULKAN
+            },
             dx12_shader_compiler: Default::default(),
             flags: wgpu::InstanceFlags::DEBUG | wgpu::InstanceFlags::VALIDATION,
             gles_minor_version: wgpu::Gles3MinorVersion::default(),
@@ -55,11 +59,18 @@ impl State {
         println!("Adapter driver: {}", info.driver);
         println!("Adapter driver info: {}", info.driver_info);
 
+        let mut limits = wgpu::Limits::default();
+        if cfg!(target_os = "macos") {
+            // Ensure we don't exceed Metal's limits
+            limits.max_texture_dimension_2d = 16384;
+            limits.max_bind_groups = 4;
+        }
+
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("Primary Device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: limits,
                 memory_hints: Default::default(),
             },
             None,
@@ -67,19 +78,41 @@ impl State {
         .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(surface_caps.formats[0]);
+        println!("Surface capabilities: {:?}", surface_caps);
+        
+        let surface_format = if cfg!(target_os = "macos") {
+            // Prefer BGRA8UnormSrgb for Metal
+            surface_caps.formats.iter()
+                .copied()
+                .find(|f| f == &wgpu::TextureFormat::Bgra8UnormSrgb)
+                .unwrap_or(surface_caps.formats[0])
+        } else {
+            surface_caps.formats.iter()
+                .copied()
+                .find(|f| f.is_srgb())
+                .unwrap_or(surface_caps.formats[0])
+        };
+
+        println!("Selected surface format: {:?}", surface_format);
+
+        let present_mode = if cfg!(target_os = "macos") {
+            // Prefer immediate mode on Metal for lower latency
+            surface_caps.present_modes.iter()
+                .copied()
+                .find(|&mode| mode == wgpu::PresentMode::Immediate)
+                .unwrap_or(surface_caps.present_modes[0])
+        } else {
+            surface_caps.present_modes[0]
+        };
+
+        println!("Selected present mode: {:?}", present_mode);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: surface_caps.present_modes[0],
+            present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
