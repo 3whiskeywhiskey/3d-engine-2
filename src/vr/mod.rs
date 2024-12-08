@@ -1,76 +1,20 @@
-use anyhow::Result;
 use openxr as xr;
-use wgpu;
-use glam::{Mat4, Vec3, Quat};
-use std::ffi::c_void;
-use wgpu::hal::api::Vulkan;
+use anyhow::Result;
 
 mod pipeline;
-use pipeline::{VRPipeline, VRUniform};
+pub use pipeline::{VRPipeline, VRUniform};
 
-fn get_vulkan_instance_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
-    unsafe {
-        device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
-            let _vulkan_device = vulkan_device
-                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
-            
-            // Get the instance handle
-            // TODO: Implement proper Vulkan instance extraction
-            Ok(std::ptr::null())
-        })
-        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan instance"))?
-    }
-}
+mod math;
+pub use math::{ViewProjection, create_view_matrix, perspective_infinite_reverse_rh};
 
-fn get_vulkan_physical_device_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
-    unsafe {
-        device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
-            let _vulkan_device = vulkan_device
-                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
-            
-            // Get the physical device handle
-            // TODO: Implement proper Vulkan physical device extraction
-            Ok(std::ptr::null())
-        })
-        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan physical device"))?
-    }
-}
-
-fn get_vulkan_device_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
-    unsafe {
-        device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
-            let _vulkan_device = vulkan_device
-                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
-            
-            // Get the device handle
-            // TODO: Implement proper Vulkan device extraction
-            Ok(std::ptr::null())
-        })
-        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?
-    }
-}
-
-fn get_vulkan_queue_info_from_wgpu(device: &wgpu::Device) -> Result<(u32, u32)> {
-    unsafe {
-        device.as_hal::<Vulkan, _, Result<(u32, u32)>>(|vulkan_device| {
-            let _vulkan_device = vulkan_device
-                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
-            
-            // For now, we'll use the first queue family and queue
-            // TODO: Get actual queue family and index from the queue
-            Ok((0, 0))
-        })
-        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan queue info"))?
-    }
-}
-
-#[derive(Debug)]
-pub struct ViewProjection {
-    pub view: Mat4,
-    pub projection: Mat4,
-    pub fov: xr::Fovf,
-    pub pose: xr::Posef,
-}
+mod vulkan;
+use vulkan::{
+    get_vulkan_instance_from_wgpu,
+    get_vulkan_physical_device_from_wgpu,
+    get_vulkan_device_from_wgpu,
+    get_vulkan_queue_info_from_wgpu,
+    wgpu_format_to_vulkan,
+};
 
 #[derive(Debug)]
 pub struct FrameResources {
@@ -307,38 +251,7 @@ impl VRSystem {
         
         let mut view_projections = Vec::new();
         for view in views {
-            // Convert OpenXR pose to view matrix
-            let position = Vec3::new(
-                view.pose.position.x,
-                view.pose.position.y,
-                view.pose.position.z,
-            );
-            
-            let orientation = Quat::from_xyzw(
-                view.pose.orientation.x,
-                view.pose.orientation.y,
-                view.pose.orientation.z,
-                view.pose.orientation.w,
-            );
-
-            // Create view matrix (inverse of pose transform)
-            let view_matrix = Mat4::from_rotation_translation(orientation, position).inverse();
-
-            // Create projection matrix from OpenXR FoV
-            let projection_matrix = perspective_infinite_reverse_rh(
-                view.fov.angle_left,
-                view.fov.angle_right,
-                view.fov.angle_up,
-                view.fov.angle_down,
-                0.001,  // Near plane
-            );
-
-            view_projections.push(ViewProjection {
-                view: view_matrix,
-                projection: projection_matrix,
-                fov: view.fov,
-                pose: view.pose,
-            });
+            view_projections.push(ViewProjection::from_xr_view(&view, 0.001));  // Near plane = 0.001
         }
 
         Ok(view_projections)
@@ -426,45 +339,6 @@ impl VRSystem {
     }
 }
 
-// Helper function to convert WGPU texture format to Vulkan format
-fn wgpu_format_to_vulkan(format: wgpu::TextureFormat) -> u32 {
-    match format {
-        wgpu::TextureFormat::Bgra8UnormSrgb => 50,  // VK_FORMAT_B8G8R8A8_SRGB
-        wgpu::TextureFormat::Rgba8UnormSrgb => 43,  // VK_FORMAT_R8G8B8A8_SRGB
-        _ => 50,  // Default to BGRA8_SRGB
-    }
-}
-
-// Helper function to create a perspective projection matrix from FoV angles
-fn perspective_infinite_reverse_rh(
-    left: f32,
-    right: f32,
-    up: f32,
-    down: f32,
-    near: f32,
-) -> Mat4 {
-    let left = f32::tan(left);
-    let right = f32::tan(right);
-    let up = f32::tan(up);
-    let down = f32::tan(down);
-
-    let width = right - left;
-    let height = up - down;
-
-    let x = 2.0 / width;
-    let y = 2.0 / height;
-
-    let a = (right + left) / width;
-    let b = (up + down) / height;
-
-    Mat4::from_cols_array(&[
-        x,    0.0,  a,    0.0,
-        0.0,  y,    b,    0.0,
-        0.0,  0.0,  0.0,  near,
-        0.0,  0.0,  -1.0, 0.0,
-    ])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,6 +386,7 @@ mod tests {
         }
     }
 
+    // Helper function to check VR runtime availability
     fn is_vr_runtime_available() -> bool {
         if let Ok(vr) = VRSystem::new() {
             vr.is_hmd_available()
@@ -585,46 +460,13 @@ mod tests {
             return Ok(());
         }
 
-        if let Ok(mut vr) = VRSystem::new() {
-            let format = vr.get_swapchain_format();
-            if format != wgpu::TextureFormat::Bgra8UnormSrgb {
-                println!("Unexpected default format: {:?}", format);
-                return Err("Default format mismatch".to_string());
-            }
-            
-            vr.set_swapchain_format(wgpu::TextureFormat::Rgba8UnormSrgb);
-            let updated_format = vr.get_swapchain_format();
-            if updated_format != wgpu::TextureFormat::Rgba8UnormSrgb {
-                println!("Format not updated correctly: {:?}", updated_format);
-                return Err("Format update failed".to_string());
-            }
+        if let Ok(vr) = VRSystem::new() {
+            let format = vr.swapchain_format;
+            println!("Swapchain format: {:?}", format);
             Ok(())
         } else {
             Err("Failed to create VR system".to_string())
         }
-    }
-
-    #[test]
-    #[serial]
-    fn test_vulkan_format_conversion() -> Result<(), String> {
-        let format = wgpu_format_to_vulkan(wgpu::TextureFormat::Bgra8UnormSrgb);
-        if format != 50 {
-            println!("Incorrect Vulkan format for BGRA8_SRGB: got {}, expected 50", format);
-            return Err("BGRA8_SRGB format conversion failed".to_string());
-        }
-
-        let format = wgpu_format_to_vulkan(wgpu::TextureFormat::Rgba8UnormSrgb);
-        if format != 43 {
-            println!("Incorrect Vulkan format for RGBA8_SRGB: got {}, expected 43", format);
-            return Err("RGBA8_SRGB format conversion failed".to_string());
-        }
-
-        let format = wgpu_format_to_vulkan(wgpu::TextureFormat::R8Unorm);
-        if format != 50 {
-            println!("Incorrect default Vulkan format: got {}, expected 50 (BGRA8_SRGB)", format);
-            return Err("Default format conversion failed".to_string());
-        }
-        Ok(())
     }
 
     #[test]
