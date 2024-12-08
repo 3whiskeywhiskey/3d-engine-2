@@ -6,22 +6,20 @@ use std::path::Path;
 pub mod model;
 pub mod scene;
 pub mod vr;
+pub mod renderer;
 
-use scene::{Scene, Renderer, camera::Camera, Transform};
+use scene::{Scene, camera::Camera, Transform};
 use model::{Model, ModelVertex};
+use renderer::{Renderer, ForcedMode};
 
 pub struct State {
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
     window: Arc<Window>,
     pub scene: Scene,
     renderer: Renderer,
 }
 
 impl State {
-    pub fn new(window: Window) -> Self {
+    pub fn new(window: Window, forced_mode: ForcedMode) -> Self {
         let window = Arc::new(window);
         let size = window.inner_size();
 
@@ -123,7 +121,7 @@ impl State {
             size.width as f32 / size.height as f32,
         );
         let mut scene = Scene::new(camera);
-        let renderer = Renderer::new(&device, &queue, &config);
+        let renderer = Renderer::new(device, queue, &config, surface, forced_mode);
 
         // Add floor plane (20x20 meters)
         let floor_vertices = vec![
@@ -159,7 +157,7 @@ impl State {
         let texture_size = 512u32; // Larger texture for better quality
         let texture_data = create_checkerboard_texture(texture_size);
         
-        let floor_texture = device.create_texture(&wgpu::TextureDescriptor {
+        let floor_texture = renderer.device().create_texture(&wgpu::TextureDescriptor {
             label: Some("Floor Texture"),
             size: wgpu::Extent3d {
                 width: texture_size,
@@ -174,7 +172,7 @@ impl State {
             view_formats: &[],
         });
 
-        queue.write_texture(
+        renderer.queue().write_texture(
             floor_texture.as_image_copy(),
             &texture_data,
             wgpu::ImageDataLayout {
@@ -193,8 +191,8 @@ impl State {
         
         // Create floor model
         let floor_model = Model::from_vertices(
-            &device,
-            &queue,
+            renderer.device(),
+            renderer.queue(),
             &floor_vertices,
             &floor_indices,
             floor_texture_view,
@@ -207,15 +205,15 @@ impl State {
 
         // Load test models
         let model1 = Model::load(
-            &device,
-            &queue,
+            renderer.device(),
+            renderer.queue(),
             Path::new("assets/2c0f9e16-66c8-4891-bfb6-d79394ee56b8.glb"),
             &renderer.material_bind_group_layout,
         ).expect("Failed to load model 1");
 
         let model2 = Model::load(
-            &device,
-            &queue,
+            renderer.device(),
+            renderer.queue(),
             Path::new("assets/f411cb1d-8c7f-4863-926a-40b8242bd166.glb"),
             &renderer.material_bind_group_layout,
         ).expect("Failed to load model 2");
@@ -246,7 +244,7 @@ impl State {
             transform.position = positions[i];
             transform.rotation = rotations[i];
             transform.scale = Vec3::splat(1.0);
-            scene.add_object(model1.clone_with_device(&device, &queue, &renderer.material_bind_group_layout), transform);
+            scene.add_object(model1.clone_with_device(renderer.device(), renderer.queue(), &renderer.material_bind_group_layout), transform);
         }
 
         // Add instances of model2
@@ -255,7 +253,7 @@ impl State {
             transform.position = positions[i];
             transform.rotation = rotations[i];
             transform.scale = Vec3::splat(1.0);
-            scene.add_object(model2.clone_with_device(&device, &queue, &renderer.material_bind_group_layout), transform);
+            scene.add_object(model2.clone_with_device(renderer.device(), renderer.queue(), &renderer.material_bind_group_layout), transform);
         }
 
         // Set up more dramatic lighting
@@ -266,10 +264,6 @@ impl State {
         );
 
         Self {
-            surface,
-            device,
-            queue,
-            config,
             window,
             scene,
             renderer,
@@ -282,20 +276,16 @@ impl State {
 
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
-            self.config.width = width;
-            self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
+            self.renderer.resize(winit::dpi::PhysicalSize::new(width, height));
             self.scene.resize(width, height);
-            self.renderer.resize(&self.device, &self.config);
         }
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let frame = self.surface.get_current_texture()?;
-        let view = frame.texture.create_view(&Default::default());
-        self.renderer.render(&self.device, &self.queue, &view, &self.scene)?;
-        frame.present();
-        Ok(())
+        self.renderer.render(&self.scene).map_err(|e| {
+            log::error!("Render error: {}", e);
+            wgpu::SurfaceError::Lost
+        })
     }
 }
 

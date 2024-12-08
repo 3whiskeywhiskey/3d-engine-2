@@ -423,4 +423,19 @@ impl Model {
         // Implementation for loading texture
         unimplemented!()
     }
+
+    pub fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        for mesh in &self.meshes {
+            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            
+            if let Some(material) = self.materials.get(mesh.material_index as usize) {
+                if let Some(bind_group) = &material.bind_group {
+                    render_pass.set_bind_group(1, bind_group, &[]);
+                }
+            }
+            
+            render_pass.draw_indexed(0..mesh.num_elements, 0, 0..1);
+        }
+    }
 } 

@@ -1,6 +1,7 @@
 use openxr as xr;
 use anyhow::Result;
 use wgpu;
+use std::fmt;
 
 use super::math::ViewProjection;
 use super::pipeline::{VRPipeline, VRUniform};
@@ -32,6 +33,16 @@ pub struct VRSystem {
     swapchain_format: wgpu::TextureFormat,
     pipeline: Option<VRPipeline>,
     session_state: SessionState,
+}
+
+impl fmt::Debug for VRSystem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VRSystem")
+            .field("system", &self.system)
+            .field("swapchain_format", &self.swapchain_format)
+            .field("session_state", &self.session_state)
+            .finish()
+    }
 }
 
 impl VRSystem {

@@ -1,11 +1,37 @@
+use clap::Parser;
 use winit::{
     event::*,
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
-use wgpu_3d_viewer::State;
+use wgpu_3d_viewer::{State, renderer::ForcedMode};
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Force VR mode
+    #[arg(long)]
+    vr: bool,
+
+    /// Force flat (non-VR) mode
+    #[arg(long)]
+    flat: bool,
+}
 
 fn main() {
+    env_logger::init();
+    let args = Args::parse();
+    
+    let forced_mode = match (args.vr, args.flat) {
+        (true, true) => {
+            log::warn!("Both --vr and --flat specified, defaulting to auto-detect mode");
+            ForcedMode::Auto
+        }
+        (true, false) => ForcedMode::VR,
+        (false, true) => ForcedMode::Flat,
+        (false, false) => ForcedMode::Auto,
+    };
+
     let event_loop = winit::event_loop::EventLoop::new()
         .expect("Failed to create event loop");
     
@@ -15,7 +41,7 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let mut state = State::new(window);
+    let mut state = State::new(window, forced_mode);
     let mut mouse_captured = false;
 
     event_loop.run(move |event, window_target| {

@@ -92,4 +92,11 @@ impl Scene {
         self.directional_light = color.clamp(Vec3::ZERO, Vec3::ONE);
         self.light_direction = direction.normalize();
     }
+
+    pub fn render<'a>(&'a self, mut render_pass: wgpu::RenderPass<'a>) {
+        // Render each object in the scene
+        for (model, _transform) in &self.objects {
+            model.render(&mut render_pass);
+        }
+    }
 } 
