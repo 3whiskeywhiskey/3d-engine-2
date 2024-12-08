@@ -19,6 +19,9 @@ pub use system::{VRSystem, SessionState};
 mod frame;
 pub use frame::FrameResources;
 
+mod timing;
+pub use timing::{FrameTimingManager, TimingStats};
+
 #[cfg(test)]
 mod tests {
     use super::*;

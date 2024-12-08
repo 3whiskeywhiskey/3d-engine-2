@@ -6,12 +6,16 @@ use anyhow::Result;
 pub fn get_vulkan_instance_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
     unsafe {
         device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
-            let _vulkan_device = vulkan_device
+            let vulkan_device = vulkan_device
                 .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
             
-            // Get the instance handle
-            // TODO: Implement proper Vulkan instance extraction
-            Ok(std::ptr::null())
+            // Get the raw instance handle from the device
+            let raw_instance = vulkan_device
+                .shared_instance()
+                .raw_instance()
+                .handle();
+
+            Ok(std::mem::transmute(raw_instance))
         })
         .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan instance"))?
     }
@@ -21,12 +25,14 @@ pub fn get_vulkan_instance_from_wgpu(device: &wgpu::Device) -> Result<*const c_v
 pub fn get_vulkan_physical_device_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
     unsafe {
         device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
-            let _vulkan_device = vulkan_device
+            let vulkan_device = vulkan_device
                 .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
             
-            // Get the physical device handle
-            // TODO: Implement proper Vulkan physical device extraction
-            Ok(std::ptr::null())
+            // Get the raw physical device handle
+            let raw_physical_device = vulkan_device
+                .raw_physical_device();
+
+            Ok(std::mem::transmute(raw_physical_device))
         })
         .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan physical device"))?
     }
@@ -36,12 +42,15 @@ pub fn get_vulkan_physical_device_from_wgpu(device: &wgpu::Device) -> Result<*co
 pub fn get_vulkan_device_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
     unsafe {
         device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
-            let _vulkan_device = vulkan_device
+            let vulkan_device = vulkan_device
                 .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
             
-            // Get the device handle
-            // TODO: Implement proper Vulkan device extraction
-            Ok(std::ptr::null())
+            // Get the raw device handle
+            let raw_device = vulkan_device
+                .raw_device()
+                .handle();
+
+            Ok(std::mem::transmute(raw_device))
         })
         .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?
     }
@@ -51,12 +60,13 @@ pub fn get_vulkan_device_from_wgpu(device: &wgpu::Device) -> Result<*const c_voi
 pub fn get_vulkan_queue_info_from_wgpu(device: &wgpu::Device) -> Result<(u32, u32)> {
     unsafe {
         device.as_hal::<Vulkan, _, Result<(u32, u32)>>(|vulkan_device| {
-            let _vulkan_device = vulkan_device
+            let vulkan_device = vulkan_device
                 .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
             
-            // For now, we'll use the first queue family and queue
-            // TODO: Get actual queue family and index from the queue
-            Ok((0, 0))
+            // Get the queue family index from the device
+            let family_index = vulkan_device.queue_family_index();
+            
+            Ok((family_index, 0)) // Using first queue in family
         })
         .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan queue info"))?
     }
@@ -77,6 +87,63 @@ pub fn wgpu_format_to_vulkan(format: wgpu::TextureFormat) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pollster::FutureExt;
+
+    fn create_test_device() -> Option<wgpu::Device> {
+        let instance = wgpu::Instance::default();
+        
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                force_fallback_adapter: true,
+                compatible_surface: None,
+            })
+            .block_on()?;
+
+        let (device, _) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    memory_hints: Default::default(),
+                },
+                None,
+            )
+            .block_on()
+            .ok()?;
+
+        Some(device)
+    }
+
+    #[test]
+    fn test_vulkan_handle_extraction() {
+        if let Some(device) = create_test_device() {
+            // Test instance extraction
+            let instance = get_vulkan_instance_from_wgpu(&device);
+            assert!(instance.is_ok(), "Failed to get Vulkan instance");
+            assert!(!instance.unwrap().is_null(), "Vulkan instance is null");
+
+            // Test physical device extraction
+            let physical_device = get_vulkan_physical_device_from_wgpu(&device);
+            assert!(physical_device.is_ok(), "Failed to get Vulkan physical device");
+            assert!(!physical_device.unwrap().is_null(), "Vulkan physical device is null");
+
+            // Test device extraction
+            let logical_device = get_vulkan_device_from_wgpu(&device);
+            assert!(logical_device.is_ok(), "Failed to get Vulkan logical device");
+            assert!(!logical_device.unwrap().is_null(), "Vulkan logical device is null");
+
+            // Test queue info extraction
+            let queue_info = get_vulkan_queue_info_from_wgpu(&device);
+            assert!(queue_info.is_ok(), "Failed to get Vulkan queue info");
+            let (family, index) = queue_info.unwrap();
+            assert!(family < 16, "Queue family index out of reasonable range"); // Most GPUs have < 16 queue families
+            assert!(index == 0, "Expected first queue in family");
+        } else {
+            println!("Skipping Vulkan handle extraction test - no suitable GPU adapter available");
+        }
+    }
 
     #[test]
     fn test_vulkan_format_conversion() {
