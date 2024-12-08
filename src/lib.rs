@@ -5,6 +5,7 @@ use std::path::Path;
 
 pub mod model;
 pub mod scene;
+pub mod vr;
 
 use scene::{Scene, Renderer, camera::Camera, Transform};
 use model::{Model, ModelVertex};
