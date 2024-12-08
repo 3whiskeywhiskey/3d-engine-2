@@ -6,9 +6,12 @@ use winit::{
 use wgpu_3d_viewer::State;
 
 fn main() {
-    let event_loop = winit::event_loop::EventLoop::new().unwrap();
+    let event_loop = winit::event_loop::EventLoop::new()
+        .expect("Failed to create event loop");
+    
     let window = WindowBuilder::new()
         .with_title("3D Engine")
+        .with_visible(true)
         .build(&event_loop)
         .unwrap();
 

@@ -27,25 +27,37 @@ impl State {
         let window = Arc::new(window);
         let size = window.inner_size();
 
+        println!("Creating WGPU instance...");
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::VULKAN,
             dx12_shader_compiler: Default::default(),
-            flags: wgpu::InstanceFlags::default(),
+            flags: wgpu::InstanceFlags::DEBUG | wgpu::InstanceFlags::VALIDATION,
             gles_minor_version: wgpu::Gles3MinorVersion::default(),
         });
 
-        let surface = instance.create_surface(window.clone()).unwrap();
+        println!("Creating surface...");
+        println!("Window info - width: {}, height: {}", size.width, size.height);
+        let surface = instance.create_surface(window.clone())
+            .expect("Failed to create surface");
 
+        println!("Requesting adapter...");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
+            power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }))
-        .unwrap();
+        .expect("Failed to find appropriate adapter");
+
+        let info = adapter.get_info();
+        println!("Using adapter: {:?}", info);
+        println!("Adapter backend: {:?}", info.backend);
+        println!("Adapter device: {}", info.device);
+        println!("Adapter driver: {}", info.driver);
+        println!("Adapter driver info: {}", info.driver_info);
 
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
-                label: None,
+                label: Some("Primary Device"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
                 memory_hints: Default::default(),
