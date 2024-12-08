@@ -14,6 +14,15 @@ pub struct ViewProjection {
     pub pose: xr::Posef,
 }
 
+#[derive(Debug, PartialEq)]
+pub enum SessionState {
+    Idle,
+    Ready,
+    Running,
+    Stopping,
+    Stopped,
+}
+
 pub struct VRSystem {
     instance: xr::Instance,
     system: xr::SystemId,
@@ -26,6 +35,7 @@ pub struct VRSystem {
     views: Option<Vec<xr::ViewConfigurationView>>,
     swapchain_format: wgpu::TextureFormat,
     pipeline: Option<VRPipeline>,
+    session_state: SessionState,
 }
 
 impl VRSystem {
@@ -64,21 +74,22 @@ impl VRSystem {
             stage: None,
             view_configuration: None,
             views: None,
-            swapchain_format: wgpu::TextureFormat::Bgra8UnormSrgb,  // Default format
+            swapchain_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             pipeline: None,
+            session_state: SessionState::Idle,
         })
     }
 
     pub fn initialize_session(&mut self, device: &wgpu::Device) -> Result<()> {
         // Get system properties for Vulkan device creation
-        let _requirements = self.instance.graphics_requirements::<xr::Vulkan>(self.system)?;
+        let requirements = self.instance.graphics_requirements::<xr::Vulkan>(self.system)?;
         
-        // TODO: We need to properly get these from wgpu/Vulkan
-        // For now, we'll use placeholder values that should work with most systems
+        // For now, we'll use placeholder values since wgpu's Vulkan backend access is more complex
+        // TODO: Implement proper Vulkan device extraction from wgpu
         let vk_session_create_info = xr::vulkan::SessionCreateInfo {
-            instance: std::ptr::null(),
-            physical_device: std::ptr::null(),
-            device: std::ptr::null(),
+            instance: std::ptr::null(),  // TODO: Get from wgpu
+            physical_device: std::ptr::null(),  // TODO: Get from wgpu
+            device: std::ptr::null(),  // TODO: Get from wgpu
             queue_family_index: 0,
             queue_index: 0,
         };
@@ -98,9 +109,6 @@ impl VRSystem {
             self.system,
             xr::ViewConfigurationType::PRIMARY_STEREO,
         )?);
-
-        // Begin session
-        session.begin(xr::ViewConfigurationType::PRIMARY_STEREO)?;
 
         // Create reference space
         let stage = session.create_reference_space(
@@ -300,6 +308,41 @@ impl VRSystem {
         } else {
             Err(anyhow::anyhow!("Pipeline not initialized"))
         }
+    }
+
+    pub fn update_session_state(&mut self) -> Result<()> {
+        if let Some(session) = &self.session {
+            let mut event_storage = xr::EventDataBuffer::new();
+            while let Some(event) = self.instance.poll_event(&mut event_storage)? {
+                match event {
+                    xr::Event::SessionStateChanged(state_event) => {
+                        match state_event.state() {
+                            xr::SessionState::READY => {
+                                session.begin(xr::ViewConfigurationType::PRIMARY_STEREO)?;
+                                self.session_state = SessionState::Ready;
+                            }
+                            xr::SessionState::STOPPING => {
+                                session.end()?;
+                                self.session_state = SessionState::Stopping;
+                            }
+                            xr::SessionState::SYNCHRONIZED => {
+                                self.session_state = SessionState::Running;
+                            }
+                            xr::SessionState::IDLE => {
+                                self.session_state = SessionState::Idle;
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn is_session_running(&self) -> bool {
+        self.session_state == SessionState::Running
     }
 }
 
