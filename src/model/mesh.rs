@@ -7,6 +7,12 @@ pub struct Mesh {
 }
 
 impl Mesh {
+    pub fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..self.num_elements, 0, 0..1);
+    }
+
     pub fn clone_with_device(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         // Create new vertex buffer
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {

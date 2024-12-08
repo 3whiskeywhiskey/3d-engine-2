@@ -1,51 +1,26 @@
-mod renderer;
+pub mod camera;
+pub mod transform;
 #[cfg(test)]
 mod tests;
 
-pub use renderer::Renderer;
-use glam::{Mat4, Vec3};
-use crate::model::Model;
+pub use camera::Camera;
+pub use transform::Transform;
+
+use std::sync::Arc;
+use wgpu::BindGroup;
+use glam::Vec3;
 use winit::keyboard::KeyCode;
 use std::time::Instant;
-
-pub mod camera;
-use camera::Camera;
-
-pub struct Transform {
-    pub position: Vec3,
-    pub rotation: Vec3,
-    pub scale: Vec3,
-}
-
-impl Transform {
-    pub fn new() -> Self {
-        Self {
-            position: Vec3::ZERO,
-            rotation: Vec3::ZERO,
-            scale: Vec3::ONE,
-        }
-    }
-
-    pub fn to_matrix(&self) -> Mat4 {
-        let translation = Mat4::from_translation(self.position);
-        let rotation = Mat4::from_euler(glam::EulerRot::XYZ, self.rotation.x, self.rotation.y, self.rotation.z);
-        let scale = Mat4::from_scale(self.scale);
-        translation * rotation * scale
-    }
-}
-
-pub struct SceneObject {
-    pub model: Model,
-    pub transform: Transform,
-}
+use crate::model::Model;
 
 pub struct Scene {
     pub camera: Camera,
     pub objects: Vec<(Model, Transform)>,
-    pub light_direction: Vec3,
-    pub directional_light: Vec3,
-    pub ambient_light: Vec3,
+    ambient_light: Vec3,
+    directional_light: Vec3,
+    light_direction: Vec3,
     last_update: Instant,
+    camera_bind_group: Option<Arc<BindGroup>>,
 }
 
 impl Scene {
@@ -57,12 +32,13 @@ impl Scene {
             directional_light: Vec3::new(1.0, 1.0, 1.0),
             ambient_light: Vec3::new(0.1, 0.1, 0.1),
             last_update: Instant::now(),
+            camera_bind_group: None,
         }
     }
 
     pub fn update(&mut self) {
         let now = Instant::now();
-        let dt = (now - self.last_update).as_secs_f32();
+        let dt = now.duration_since(self.last_update).as_secs_f32();
         self.last_update = now;
 
         self.camera.update(dt);
@@ -91,12 +67,5 @@ impl Scene {
     pub fn set_directional_light(&mut self, color: Vec3, direction: Vec3) {
         self.directional_light = color.clamp(Vec3::ZERO, Vec3::ONE);
         self.light_direction = direction.normalize();
-    }
-
-    pub fn render<'a>(&'a self, mut render_pass: wgpu::RenderPass<'a>) {
-        // Render each object in the scene
-        for (model, _transform) in &self.objects {
-            model.render(&mut render_pass);
-        }
     }
 } 

@@ -4,7 +4,7 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
-use wgpu_3d_viewer::{State, renderer::ForcedMode};
+use wgpu_3d_viewer::{State, ForcedMode};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -25,11 +25,11 @@ fn main() {
     let forced_mode = match (args.vr, args.flat) {
         (true, true) => {
             log::warn!("Both --vr and --flat specified, defaulting to auto-detect mode");
-            ForcedMode::Auto
+            ForcedMode::Standard
         }
         (true, false) => ForcedMode::VR,
-        (false, true) => ForcedMode::Flat,
-        (false, false) => ForcedMode::Auto,
+        (false, true) => ForcedMode::Standard,
+        (false, false) => ForcedMode::Standard,
     };
 
     let event_loop = winit::event_loop::EventLoop::new()
@@ -85,7 +85,7 @@ fn main() {
                     }
                     WindowEvent::Resized(new_size) => {
                         if new_size.width > 0 && new_size.height > 0 {
-                            state.resize(new_size.width, new_size.height);
+                            state.resize(new_size);
                         }
                     }
                     WindowEvent::RedrawRequested => {
