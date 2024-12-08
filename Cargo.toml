@@ -44,3 +44,4 @@ tempfile = "3.8"
 assert_fs = "1.0"
 test-log = "0.2"
 serial_test = "2.0.0"
+tokio = { version = "1.32", features = ["full"] }
