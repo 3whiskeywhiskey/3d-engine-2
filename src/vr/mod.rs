@@ -7,6 +7,8 @@ use glam::{Mat4, Vec3, Quat};
 pub struct ViewProjection {
     pub view: Mat4,
     pub projection: Mat4,
+    pub fov: xr::Fovf,
+    pub pose: xr::Posef,
 }
 
 pub struct VRSystem {
@@ -19,6 +21,7 @@ pub struct VRSystem {
     stage: Option<xr::Space>,
     view_configuration: Option<xr::ViewConfigurationProperties>,
     views: Option<Vec<xr::ViewConfigurationView>>,
+    swapchain_format: wgpu::TextureFormat,
 }
 
 impl VRSystem {
@@ -57,6 +60,7 @@ impl VRSystem {
             stage: None,
             view_configuration: None,
             views: None,
+            swapchain_format: wgpu::TextureFormat::Bgra8UnormSrgb,  // Default format
         })
     }
 
@@ -105,7 +109,7 @@ impl VRSystem {
                 create_flags: xr::SwapchainCreateFlags::EMPTY,
                 usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
                     | xr::SwapchainUsageFlags::SAMPLED,
-                format: 87, // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
+                format: wgpu_format_to_vulkan(self.swapchain_format),
                 sample_count: 1,
                 width: views[0].recommended_image_rect_width,
                 height: views[0].recommended_image_rect_height,
@@ -242,6 +246,8 @@ impl VRSystem {
             view_projections.push(ViewProjection {
                 view: view_matrix,
                 projection: projection_matrix,
+                fov: view.fov,
+                pose: view.pose,
             });
         }
 
@@ -256,6 +262,23 @@ impl VRSystem {
                 view.recommended_image_rect_height,
             )
         })
+    }
+
+    pub fn get_swapchain_format(&self) -> wgpu::TextureFormat {
+        self.swapchain_format
+    }
+
+    pub fn set_swapchain_format(&mut self, format: wgpu::TextureFormat) {
+        self.swapchain_format = format;
+    }
+}
+
+// Helper function to convert WGPU texture format to Vulkan format
+fn wgpu_format_to_vulkan(format: wgpu::TextureFormat) -> u32 {
+    match format {
+        wgpu::TextureFormat::Bgra8UnormSrgb => 50,  // VK_FORMAT_B8G8R8A8_SRGB
+        wgpu::TextureFormat::Rgba8UnormSrgb => 43,  // VK_FORMAT_R8G8B8A8_SRGB
+        _ => 50,  // Default to BGRA8_SRGB
     }
 }
 
@@ -298,42 +321,152 @@ mod tests {
     #[serial]
     fn test_vr_system_creation() {
         let vr = VRSystem::new();
-        assert!(vr.is_ok(), "Failed to create VR system: {:?}", vr.err());
+        assert!(vr.is_ok(), "Failed to create VR system");
     }
 
     #[test]
     #[serial]
     fn test_hmd_availability() {
-        let vr = VRSystem::new().expect("Failed to create VR system");
-        println!("HMD available: {}", vr.is_hmd_available());
-        // Note: This test might fail if no HMD is connected
-        // assert!(vr.is_hmd_available(), "No HMD detected");
+        let vr = VRSystem::new().unwrap();
+        let available = vr.is_hmd_available();
+        println!("HMD available: {}", available);
     }
 
     #[test]
     #[serial]
     fn test_view_configuration() {
-        let vr = VRSystem::new().expect("Failed to create VR system");
-        if vr.is_hmd_available() {
-            let config = vr.get_view_configuration();
-            assert!(config.is_ok(), "Failed to get view configuration: {:?}", config.err());
-            
-            if let Ok(config) = config {
-                println!("View configuration:");
-                println!("  FOV mutable: {}", config.fov_mutable);
-            }
+        let vr = VRSystem::new().unwrap();
+        let config = vr.get_view_configuration();
+        assert!(config.is_ok(), "Failed to get view configuration");
+    }
 
-            // Get recommended view configuration
-            if let Ok(views) = vr.get_view_configuration_views() {
-                for (i, view) in views.iter().enumerate() {
-                    println!("View {}:", i);
-                    println!("  Recommended width: {}", view.recommended_image_rect_width);
-                    println!("  Recommended height: {}", view.recommended_image_rect_height);
-                    println!("  Max swapchain samples: {}", view.max_swapchain_sample_count);
+    #[test]
+    #[serial]
+    fn test_swapchain_format() {
+        let mut vr = VRSystem::new().unwrap();
+        assert_eq!(vr.get_swapchain_format(), wgpu::TextureFormat::Bgra8UnormSrgb, "Default format should be Bgra8UnormSrgb");
+        
+        vr.set_swapchain_format(wgpu::TextureFormat::Rgba8UnormSrgb);
+        assert_eq!(vr.get_swapchain_format(), wgpu::TextureFormat::Rgba8UnormSrgb, "Format should be updated to Rgba8UnormSrgb");
+    }
+
+    #[test]
+    #[serial]
+    fn test_vulkan_format_conversion() {
+        assert_eq!(wgpu_format_to_vulkan(wgpu::TextureFormat::Bgra8UnormSrgb), 50, "BGRA8_SRGB format should be 50");
+        assert_eq!(wgpu_format_to_vulkan(wgpu::TextureFormat::Rgba8UnormSrgb), 43, "RGBA8_SRGB format should be 43");
+        assert_eq!(wgpu_format_to_vulkan(wgpu::TextureFormat::R8Unorm), 50, "Unknown format should default to BGRA8_SRGB (50)");
+    }
+
+    #[test]
+    #[serial]
+    fn test_perspective_matrix() {
+        // Test with symmetric FOV
+        let matrix = perspective_infinite_reverse_rh(
+            -0.5, // left
+            0.5,  // right
+            0.5,  // up
+            -0.5, // down
+            0.01, // near
+        );
+
+        // Check that the matrix preserves aspect ratio
+        assert!((matrix.x_axis.x - matrix.y_axis.y).abs() < f32::EPSILON, "Perspective matrix should preserve aspect ratio for symmetric FOV");
+
+        // Test with asymmetric FOV
+        let matrix = perspective_infinite_reverse_rh(
+            -0.3, // left
+            0.7,  // right
+            0.6,  // up
+            -0.4, // down
+            0.01, // near
+        );
+
+        // Check that the matrix handles asymmetric FOV correctly
+        assert!(matrix.x_axis.x > 0.0, "X scale should be positive");
+        assert!(matrix.y_axis.y > 0.0, "Y scale should be positive");
+        assert!(matrix.w_axis.z < 0.0, "W component of Z axis should be negative for reverse-Z");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_view_projection_creation() {
+        let mut vr = VRSystem::new().unwrap();
+        
+        // Create a mock frame state
+        let frame_state = xr::FrameState {
+            predicted_display_time: xr::Time::from_nanos(0),
+            predicted_display_period: xr::Duration::from_nanos(0),
+            should_render: true,
+        };
+
+        // Test view projection creation (this will fail if no HMD is connected)
+        if vr.is_hmd_available() {
+            let device = create_test_device().await;
+            
+            // Skip the test if session initialization fails (which is expected without a real VR runtime)
+            if let Ok(()) = vr.initialize_session(&device) {
+                let view_projections = vr.get_view_projections(&frame_state);
+                if let Ok(projections) = view_projections {
+                    assert_eq!(projections.len(), 2, "Should have two view projections for stereo");
+                    
+                    for proj in projections {
+                        // Check view matrix is orthogonal (up to floating point error)
+                        let view_transpose = proj.view.transpose();
+                        let identity = proj.view * view_transpose;
+                        for i in 0..4 {
+                            for j in 0..4 {
+                                let expected = if i == j { 1.0 } else { 0.0 };
+                                assert!((identity.col(i)[j] - expected).abs() < 0.001, 
+                                    "View matrix should be orthogonal");
+                            }
+                        }
+
+                        // Check projection matrix properties
+                        assert!(proj.projection.w_axis.z < 0.0, 
+                            "Projection W.z should be negative for reverse-Z");
+                        assert_eq!(proj.projection.z_axis.w, -1.0, 
+                            "Projection Z.w should be -1 for perspective projection");
+                    }
                 }
+            } else {
+                println!("Skipping view projection test - failed to initialize VR session");
             }
         } else {
-            println!("Skipping view configuration test - no HMD available");
+            println!("Skipping view projection test - no HMD available");
         }
+    }
+
+    async fn create_test_device() -> wgpu::Device {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            dx12_shader_compiler: Default::default(),
+            flags: wgpu::InstanceFlags::empty(),
+            gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
+        });
+
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })
+            .await
+            .unwrap();
+
+        let (device, _) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: Default::default(),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        device
     }
 } 

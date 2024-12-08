@@ -223,7 +223,7 @@ impl Renderer {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: self.config.format,
+                format: vr.get_swapchain_format(),
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             });
@@ -262,25 +262,8 @@ impl Renderer {
 
             // Create projection view for this eye
             let projection_view = xr::CompositionLayerProjectionView::new()
-                .pose(xr::Posef {
-                    orientation: xr::Quaternionf {
-                        x: view_proj.view.x_axis.x,
-                        y: view_proj.view.x_axis.y,
-                        z: view_proj.view.x_axis.z,
-                        w: 1.0,
-                    },
-                    position: xr::Vector3f {
-                        x: view_proj.view.w_axis.x,
-                        y: view_proj.view.w_axis.y,
-                        z: view_proj.view.w_axis.z,
-                    },
-                })
-                .fov(xr::Fovf {
-                    angle_left: -1.0,  // TODO: Calculate proper FoV angles from projection matrix
-                    angle_right: 1.0,
-                    angle_up: 1.0,
-                    angle_down: -1.0,
-                })
+                .pose(view_proj.pose)
+                .fov(view_proj.fov)
                 .sub_image(xr::SwapchainSubImage::new()
                     .swapchain(vr.swapchain.as_ref().unwrap())
                     .image_array_index(i as u32)
