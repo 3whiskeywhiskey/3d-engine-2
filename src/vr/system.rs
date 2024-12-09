@@ -1,6 +1,4 @@
-use std::ffi::c_void;
 use anyhow::Result;
-use ash::vk;
 use openxr as xr;
 use wgpu::TextureFormat;
 use glam::Mat4;

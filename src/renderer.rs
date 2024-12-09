@@ -510,7 +510,8 @@ impl<'a> Renderer<'a> {
         }
 
         // Get the swapchain image to render to
-        let image_index = vr.acquire_swapchain_image()?;
+        //let image_index = vr.acquire_swapchain_image()?;
+        vr.acquire_swapchain_image()?;
         vr.wait_swapchain_image()?;
 
         // Get view projections for both eyes
