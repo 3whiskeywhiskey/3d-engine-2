@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::sync::Arc;
+use std::num::NonZeroU32;
 use wgpu::{
     util::DeviceExt,
     Device, Queue, RenderPipeline, Surface, SurfaceConfiguration,
@@ -261,7 +262,7 @@ impl<'a> Renderer<'a> {
         });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
+            label: Some("VR Render Pipeline"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -300,7 +301,7 @@ impl<'a> Renderer<'a> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview: Some(NonZeroU32::new(2).unwrap()),
             cache: None,
         });
 
@@ -534,8 +535,12 @@ impl<'a> Renderer<'a> {
         let swapchain_view = vr_pipeline.create_swapchain_view(&self.device, width, height);
         let depth_view = vr_pipeline.create_depth_view(&self.device, width, height);
 
+        log::warn!("Starting VR render pass with dimensions: {}x{}", width, height);
+        log::warn!("View projections count: {}", view_projections.len());
+
         // Begin render pass
         {
+            log::warn!("Creating render pass with multiview=2");
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("VR Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -562,6 +567,8 @@ impl<'a> Renderer<'a> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            log::warn!("Created render pass with multiview setup");
 
             // Set the VR pipeline
             render_pass.set_pipeline(&vr_pipeline.render_pipeline);

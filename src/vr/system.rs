@@ -4,6 +4,7 @@ use wgpu::TextureFormat;
 use glam::Mat4;
 use glam::Quat;
 use glam::Vec3;
+use ash::vk::Handle as VkHandle;
 
 use super::vulkan::{
     create_vulkan_instance,
@@ -32,6 +33,10 @@ pub struct VRSystem {
 
 impl VRSystem {
     pub fn new() -> Result<Self> {
+        // Initialize logging if not already done
+        env_logger::try_init().ok();
+        log::warn!("Initializing VR System");
+
         // Create OpenXR instance
         let xr_entry = xr::Entry::linked();
 
@@ -43,6 +48,7 @@ impl VRSystem {
         enabled_extensions.khr_vulkan_enable2 = available_extensions.khr_vulkan_enable2;
 
         if !enabled_extensions.khr_vulkan_enable2 {
+            log::warn!("OpenXR Vulkan support not available");
             return Err(anyhow::anyhow!("OpenXR Vulkan support not available"));
         }
 
@@ -96,6 +102,25 @@ impl VRSystem {
 
         // Get physical device
         let vk_physical_device = get_vulkan_physical_device(&instance, system, vk_instance)?;
+
+        // Log device capabilities for multiview
+        unsafe {
+            let vk_instance_handle = std::mem::transmute::<*const std::ffi::c_void, ash::vk::Instance>(vk_instance);
+            let vk_physical_device_handle = std::mem::transmute::<*const std::ffi::c_void, ash::vk::PhysicalDevice>(vk_physical_device);
+            
+            let instance_raw = ash::Instance::load(vk_entry.static_fn(), vk_instance_handle);
+            let mut multiview_features = ash::vk::PhysicalDeviceMultiviewFeatures::default();
+            let mut features2 = ash::vk::PhysicalDeviceFeatures2::default();
+            features2.p_next = &mut multiview_features as *mut _ as *mut std::ffi::c_void;
+            instance_raw.get_physical_device_features2(
+                vk_physical_device_handle,
+                &mut features2
+            );
+            log::warn!("VR Device Capabilities:");
+            log::warn!("  Multiview support: {}", multiview_features.multiview != 0);
+            log::warn!("  Multiview geometry shader: {}", multiview_features.multiview_geometry_shader != 0);
+            log::warn!("  Multiview tessellation shader: {}", multiview_features.multiview_tessellation_shader != 0);
+        }
 
         // Create logical device
         let (vk_device, queue_family_index, queue_index) = create_vulkan_device(
