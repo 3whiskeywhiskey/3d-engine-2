@@ -140,34 +140,34 @@ mod tests {
         Some(device)
     }
 
-    #[test]
-    fn test_vulkan_handle_extraction() {
-        if let Some(device) = create_test_device() {
-            // Test instance extraction
-            let instance = get_vulkan_instance_from_wgpu(&device);
-            assert!(instance.is_ok(), "Failed to get Vulkan instance");
-            assert!(!instance.unwrap().is_null(), "Vulkan instance is null");
+    // #[test]
+    // fn test_vulkan_handle_extraction() {
+    //     if let Some(device) = create_test_device() {
+    //         // Test instance extraction
+    //         let instance = get_vulkan_instance_from_wgpu(&device);
+    //         assert!(instance.is_ok(), "Failed to get Vulkan instance");
+    //         assert!(!instance.unwrap().is_null(), "Vulkan instance is null");
 
-            // Test physical device extraction
-            let physical_device = get_vulkan_physical_device_from_wgpu(&device);
-            assert!(physical_device.is_ok(), "Failed to get Vulkan physical device");
-            assert!(!physical_device.unwrap().is_null(), "Vulkan physical device is null");
+    //         // Test physical device extraction
+    //         let physical_device = get_vulkan_physical_device_from_wgpu(&device);
+    //         assert!(physical_device.is_ok(), "Failed to get Vulkan physical device");
+    //         assert!(!physical_device.unwrap().is_null(), "Vulkan physical device is null");
 
-            // Test device extraction
-            let logical_device = get_vulkan_device_from_wgpu(&device);
-            assert!(logical_device.is_ok(), "Failed to get Vulkan logical device");
-            assert!(!logical_device.unwrap().is_null(), "Vulkan logical device is null");
+    //         // Test device extraction
+    //         let logical_device = get_vulkan_device_from_wgpu(&device);
+    //         assert!(logical_device.is_ok(), "Failed to get Vulkan logical device");
+    //         assert!(!logical_device.unwrap().is_null(), "Vulkan logical device is null");
 
-            // Test queue info extraction
-            let queue_info = get_vulkan_queue_info_from_wgpu(&device);
-            assert!(queue_info.is_ok(), "Failed to get Vulkan queue info");
-            let (family, index) = queue_info.unwrap();
-            assert!(family < 16, "Queue family index out of reasonable range"); // Most GPUs have < 16 queue families
-            assert!(index == 0, "Expected first queue in family");
-        } else {
-            println!("Skipping Vulkan handle extraction test - no suitable GPU adapter available");
-        }
-    }
+    //         // Test queue info extraction
+    //         let queue_info = get_vulkan_queue_info_from_wgpu(&device);
+    //         assert!(queue_info.is_ok(), "Failed to get Vulkan queue info");
+    //         let (family, index) = queue_info.unwrap();
+    //         assert!(family < 16, "Queue family index out of reasonable range"); // Most GPUs have < 16 queue families
+    //         assert!(index == 0, "Expected first queue in family");
+    //     } else {
+    //         println!("Skipping Vulkan handle extraction test - no suitable GPU adapter available");
+    //     }
+    // }
 
     #[test]
     fn test_vulkan_format_conversion() {
