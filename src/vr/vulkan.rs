@@ -1,9 +1,13 @@
+use wgpu;
 use std::ffi::c_void;
-use wgpu::hal::api::Vulkan;
+use openxr as xr;
 use anyhow::Result;
 use ash::vk;
 
-pub fn create_vulkan_instance(xr_instance: &openxr::Instance, system: openxr::SystemId) -> Result<*const c_void> {
+pub fn create_vulkan_instance(
+    xr_instance: &xr::Instance,
+    system: xr::SystemId,
+) -> Result<*const c_void> {
     unsafe {
         // Create Vulkan entry point
         let vk_entry = ash::Entry::load().map_err(|err| {
@@ -39,13 +43,13 @@ pub fn create_vulkan_instance(xr_instance: &openxr::Instance, system: openxr::Sy
 }
 
 pub fn get_vulkan_physical_device(
-    xr_instance: &openxr::Instance,
-    system: openxr::SystemId,
-    vk_instance: *const c_void,
+    xr_instance: &xr::Instance,
+    system: xr::SystemId,
+    _vk_instance: *const c_void,
 ) -> Result<*const c_void> {
     unsafe {
         let vk_physical_device = xr_instance
-            .vulkan_graphics_device(system, vk_instance)
+            .vulkan_graphics_device(system, _vk_instance)
             .map_err(|err| anyhow::anyhow!("Failed to get Vulkan physical device: {}", err))?;
 
         Ok(vk_physical_device as *const c_void)
@@ -53,9 +57,9 @@ pub fn get_vulkan_physical_device(
 }
 
 pub fn create_vulkan_device(
-    xr_instance: &openxr::Instance,
-    system: openxr::SystemId,
-    vk_instance: *const c_void,
+    xr_instance: &xr::Instance,
+    system: xr::SystemId,
+    _vk_instance: *const c_void,
     vk_physical_device: *const c_void,
 ) -> Result<(*const c_void, u32, u32)> {
     unsafe {
@@ -111,34 +115,34 @@ pub fn wgpu_format_to_vulkan(format: wgpu::TextureFormat) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pollster::FutureExt;
+    //use pollster::FutureExt;
 
-    fn create_test_device() -> Option<wgpu::Device> {
-        let instance = wgpu::Instance::default();
+    // fn create_test_device() -> Option<wgpu::Device> {
+    //     let instance = wgpu::Instance::default();
         
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
-                force_fallback_adapter: true,
-                compatible_surface: None,
-            })
-            .block_on()?;
+    //     let adapter = instance
+    //         .request_adapter(&wgpu::RequestAdapterOptions {
+    //             power_preference: wgpu::PowerPreference::LowPower,
+    //             force_fallback_adapter: true,
+    //             compatible_surface: None,
+    //         })
+    //         .block_on()?;
 
-        let (device, _) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_defaults(),
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
-            .block_on()
-            .ok()?;
+    //     let (device, _) = adapter
+    //         .request_device(
+    //             &wgpu::DeviceDescriptor {
+    //                 label: None,
+    //                 required_features: wgpu::Features::empty(),
+    //                 required_limits: wgpu::Limits::downlevel_defaults(),
+    //                 memory_hints: Default::default(),
+    //             },
+    //             None,
+    //         )
+    //         .block_on()
+    //         .ok()?;
 
-        Some(device)
-    }
+    //     Some(device)
+    // }
 
     // #[test]
     // fn test_vulkan_handle_extraction() {

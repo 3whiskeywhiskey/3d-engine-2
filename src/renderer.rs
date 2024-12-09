@@ -616,4 +616,11 @@ impl<'a> Renderer<'a> {
 
         Ok(())
     }
+
+    pub fn get_vr_system(&mut self) -> Option<&mut VRSystem> {
+        match self.mode {
+            RenderMode::VR(ref mut vr) => Some(vr),
+            _ => None,
+        }
+    }
 } 

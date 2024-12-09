@@ -101,7 +101,7 @@ fn main() {
                 state.scene.process_mouse(delta.0 as f32, delta.1 as f32);
             }
             Event::AboutToWait => {
-                state.scene.update();
+                state.update();
                 state.window().request_redraw();
             }
             _ => {}

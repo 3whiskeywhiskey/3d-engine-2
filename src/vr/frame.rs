@@ -56,15 +56,23 @@ impl FrameManager {
         self.session.as_ref()
     }
 
+    pub fn wait_frame(&mut self) -> Result<xr::FrameState> {
+        if let Some(frame_waiter) = &mut self.frame_waiter {
+            Ok(frame_waiter.wait()?)
+        } else {
+            Err(anyhow::anyhow!("Frame waiter not initialized"))
+        }
+    }
+
     pub fn begin_frame(&mut self) -> Result<xr::FrameState> {
         if let (Some(frame_waiter), Some(frame_stream)) = (&mut self.frame_waiter, &mut self.frame_stream) {
-            frame_waiter.wait()?;
-            frame_stream.begin()?;
-            Ok(xr::FrameState {
-                predicted_display_time: xr::Time::from_nanos(0),
-                predicted_display_period: xr::Duration::from_nanos(0),
-                should_render: true,
-            })
+            // Wait for the next frame
+            let frame_state = frame_waiter.wait()?;
+            
+            // Begin the frame
+            frame_stream.begin().map_err(|e| anyhow::anyhow!("Failed to begin frame: {}", e))?;
+            
+            Ok(frame_state)
         } else {
             Err(anyhow::anyhow!("Frame waiter or stream not initialized"))
         }
@@ -73,6 +81,8 @@ impl FrameManager {
     pub fn acquire_swapchain_image(&mut self) -> Result<u32> {
         if let Some(swapchain) = &mut self.swapchain {
             let image_index = swapchain.acquire_image()?;
+            log::info!("Acquired swapchain image {}", image_index);
+            // Use a shorter timeout to avoid blocking too long
             swapchain.wait_image(xr::Duration::from_nanos(100_000_000))?;
             Ok(image_index)
         } else {
@@ -202,6 +212,14 @@ impl FrameManager {
 
     pub fn get_swapchain(&self) -> Option<&xr::Swapchain<xr::Vulkan>> {
         self.swapchain.as_ref()
+    }
+
+    pub fn get_frame_stream_mut(&mut self) -> Option<&mut xr::FrameStream<xr::Vulkan>> {
+        self.frame_stream.as_mut()
+    }
+
+    pub fn get_frame_stream(&self) -> Option<&xr::FrameStream<xr::Vulkan>> {
+        self.frame_stream.as_ref()
     }
 }
 

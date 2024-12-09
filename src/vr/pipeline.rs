@@ -132,7 +132,7 @@ impl VRPipeline {
     pub fn create_swapchain_view(
         &self,
         device: &wgpu::Device,
-        image_index: u32,
+        _image_index: u32,
         width: u32,
         height: u32,
     ) -> Result<wgpu::TextureView, anyhow::Error> {
@@ -167,6 +167,15 @@ impl VRPipeline {
 
         Ok(view)
     }
+
+    pub fn render(
+        &self,
+        _encoder: &mut wgpu::CommandEncoder,
+        _view: &wgpu::TextureView,
+        _image_index: u32,
+    ) {
+        // TODO: Implement VR rendering
+    }
 }
 
 #[cfg(test)]
@@ -176,7 +185,7 @@ mod tests {
 
     struct TestContext {
         device: wgpu::Device,
-        queue: wgpu::Queue,
+        _queue: wgpu::Queue,
     }
 
     impl TestContext {
@@ -199,7 +208,7 @@ mod tests {
                 None,
             )).ok()?;
 
-            Some(Self { device, queue })
+            Some(Self { device, _queue: queue })
         }
     }
 

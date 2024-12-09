@@ -2,7 +2,6 @@ use openxr as xr;
 use anyhow::Result;
 use wgpu;
 use std::fmt;
-use std::ffi::c_void;
 
 use super::math::ViewProjection;
 use super::pipeline::{VRPipeline, VRUniform};
@@ -20,6 +19,10 @@ const XR_TARGET_VERSION: xr::Version = xr::Version::new(1, 2, 0);
 pub enum SessionState {
     Idle,
     Ready,
+    Visible,
+    Focused {
+        resources: FrameResources,
+    },
     Running {
         resources: FrameResources,
     },
@@ -275,7 +278,60 @@ impl VRSystem {
                                 log::info!("Initialized frame manager resources");
                             }
                         }
-                        _ => {}
+                        xr::SessionState::FOCUSED => {
+                            log::info!("Session is now focused");
+                            // Initialize frame resources when focused
+                            let frame_state = if let Some(frame_manager) = &mut self.frame_manager {
+                                frame_manager.wait_frame()?
+                            } else {
+                                return Err(anyhow::anyhow!("Frame manager not initialized"));
+                            };
+
+                            if let Some(frame_manager) = &mut self.frame_manager {
+                                if let Some(frame_stream) = frame_manager.get_frame_stream_mut() {
+                                    frame_stream.begin().map_err(|e| anyhow::anyhow!("Failed to begin frame: {}", e))?;
+                                } else {
+                                    return Err(anyhow::anyhow!("Frame stream not initialized"));
+                                }
+
+                                // Get initial view projections with proper timing
+                                let view_projections = frame_manager.get_view_projections(&frame_state)?;
+
+                                self.session_state = SessionState::Running {
+                                    resources: FrameResources {
+                                        frame_state,
+                                        view_projections,
+                                    }
+                                };
+                            }
+                        }
+                        xr::SessionState::STOPPING => {
+                            log::info!("Session is stopping");
+                            // End session
+                            if let Some(frame_manager) = &mut self.frame_manager {
+                                if let Some(session) = frame_manager.get_session() {
+                                    session.end()?;
+                                }
+                            }
+                            self.session_state = SessionState::Stopping;
+                        }
+                        xr::SessionState::IDLE => {
+                            log::info!("Session is idle");
+                            self.session_state = SessionState::Idle;
+                        }
+                        xr::SessionState::EXITING => {
+                            log::info!("Session is exiting");
+                            //if let Some(session) = frame_manager.get_session() {
+                            //session.end()?;
+                            //}
+                            self.session_state = SessionState::Stopped;
+                        }
+                        xr::SessionState::LOSS_PENDING => {
+                            log::warn!("Session loss is pending");
+                        }
+                        other => {
+                            log::info!("Unhandled session state: {:?}", other);
+                        }
                     }
                 }
             }
@@ -384,40 +440,83 @@ impl VRSystem {
     }
 
     pub fn update_session_state(&mut self) -> Result<()> {
-        if let Some(frame_manager) = &self.frame_manager {
+        if let Some(frame_manager) = &mut self.frame_manager {
             let mut event_storage = xr::EventDataBuffer::new();
             while let Some(event) = self.instance.poll_event(&mut event_storage)? {
                 match event {
                     xr::Event::SessionStateChanged(state_event) => {
-                        match state_event.state() {
+                        let state = state_event.state();
+                        log::info!("Session state changed to: {:?}", state);
+                        match state {
                             xr::SessionState::READY => {
+                                // Begin session when ready
+                                if let Some(session) = frame_manager.get_session() {
+                                    session.begin(xr::ViewConfigurationType::PRIMARY_STEREO)?;
+                                    log::info!("Session begun successfully");
+                                }
                                 self.session_state = SessionState::Ready;
                             }
-                            xr::SessionState::STOPPING => {
-                                // End session
-                                if let Some(session) = frame_manager.get_session() {
-                                    session.end()?;
-                                    self.session_state = SessionState::Stopping;
-                                }
+                            xr::SessionState::VISIBLE => {
+                                log::info!("Session is now visible");
+                                self.session_state = SessionState::Visible;
                             }
-                            xr::SessionState::SYNCHRONIZED => {
-                                let frame_state = xr::FrameState {
-                                    predicted_display_time: xr::Time::from_nanos(0),
-                                    predicted_display_period: xr::Duration::from_nanos(0),
-                                    should_render: true,
-                                };
+                            xr::SessionState::FOCUSED => {
+                                log::info!("Session is now focused");
+                                // First get frame timing
+                                let frame_state = frame_manager.wait_frame()?;
+                                
+                                // Then begin frame stream
+                                if let Some(frame_stream) = frame_manager.get_frame_stream_mut() {
+                                    frame_stream.begin().map_err(|e| anyhow::anyhow!("Failed to begin frame: {}", e))?;
+                                } else {
+                                    return Err(anyhow::anyhow!("Frame stream not initialized"));
+                                }
+
+                                // Get initial view projections with proper timing
+                                let view_projections = frame_manager.get_view_projections(&frame_state)?;
+
                                 self.session_state = SessionState::Running {
                                     resources: FrameResources {
                                         frame_state,
-                                        view_projections: Vec::new(),
-                                    },
+                                        view_projections,
+                                    }
                                 };
                             }
+                            xr::SessionState::STOPPING => {
+                                log::info!("Session is stopping");
+                                // End session
+                                if let Some(session) = frame_manager.get_session() {
+                                    session.end()?;
+                                }
+                                self.session_state = SessionState::Stopping;
+                            }
                             xr::SessionState::IDLE => {
+                                log::info!("Session is idle");
                                 self.session_state = SessionState::Idle;
                             }
-                            _ => {}
+                            xr::SessionState::EXITING => {
+                                log::info!("Session is exiting");
+                                if let Some(session) = frame_manager.get_session() {
+                                    session.end()?;
+                                }
+                                self.session_state = SessionState::Stopped;
+                            }
+                            xr::SessionState::LOSS_PENDING => {
+                                log::warn!("Session loss is pending");
+                            }
+                            xr::SessionState::SYNCHRONIZED => {
+                                log::info!("Session is synchronized");
+                            }
+                            other => {
+                                log::info!("Unhandled session state: {:?}", other);
+                            }
                         }
+                    }
+                    xr::Event::InstanceLossPending(_) => {
+                        log::warn!("OpenXR instance loss pending");
+                    }
+                    xr::Event::EventsLost(_) => {
+                        log::warn!("Lost some OpenXR events");
                     }
                     _ => {}
                 }
