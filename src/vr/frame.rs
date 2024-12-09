@@ -295,11 +295,15 @@ impl FrameManager {
             log::info!("Successfully began frame stream");
 
             // Create and submit projection layer with required flags
+            let flags = xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA;
+
+            // Create layer using builder pattern
             let layer = xr::CompositionLayerProjection::new()
-                .layer_flags(xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA)
+                .layer_flags(flags)
                 .space(stage)
                 .views(&projection_views);
-            log::info!("Created projection layer with {} views", projection_views.len());
+
+            log::info!("Created projection layer with {} views and flags {:?}", projection_views.len(), flags);
 
             // Submit frame with layer
             frame_stream.end(
