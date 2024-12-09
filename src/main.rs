@@ -41,7 +41,7 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let mut state = State::new(window, forced_mode);
+    let mut state = pollster::block_on(State::new(window, forced_mode));
     let mut mouse_captured = false;
 
     event_loop.run(move |event, window_target| {
