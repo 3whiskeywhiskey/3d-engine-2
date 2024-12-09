@@ -47,13 +47,11 @@ struct VertexOutput {
     @location(2) world_pos: vec3<f32>,
     @location(3) tangent: vec3<f32>,
     @location(4) bitangent: vec3<f32>,
-    @builtin(view_index) view_index: u32,
 };
 
 @vertex
 fn vs_main(
     model_in: VertexInput,
-    @builtin(view_index) view_index: u32,
 ) -> VertexOutput {
     var out: VertexOutput;
     let world_pos = model.model_matrix * vec4<f32>(model_in.position, 1.0);
@@ -69,7 +67,6 @@ fn vs_main(
     out.tangent = tangent;
     out.bitangent = bitangent;
     out.world_pos = world_pos.xyz;
-    out.view_index = view_index;
     return out;
 }
 
