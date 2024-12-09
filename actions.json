@@ -1,0 +1,32 @@
+{
+    "actions": [
+        {
+            "name": "/actions/main/in/hand_pose",
+            "type": "pose"
+        },
+        {
+            "name": "/actions/main/in/head_pose",
+            "type": "pose"
+        }
+    ],
+    "action_sets": [
+        {
+            "name": "/actions/main",
+            "usage": "leftright"
+        }
+    ],
+    "localization": [
+        {
+            "language_tag": "en_US",
+            "/actions/main": "Main Action Set",
+            "/actions/main/in/hand_pose": "Hand Pose",
+            "/actions/main/in/head_pose": "Head Pose"
+        }
+    ],
+    "default_bindings": [
+        {
+            "controller_type": "generic",
+            "binding_url": "generic_bindings.json"
+        }
+    ]
+} 

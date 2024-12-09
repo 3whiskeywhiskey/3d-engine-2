@@ -133,8 +133,8 @@ impl<'a> State<'a> {
     pub fn update(&mut self) {
         self.scene.update();
         if let Some(vr) = self.renderer.get_vr_system() {
-            if let Err(e) = vr.update_session_state() {
-                log::error!("Failed to update VR session state: {:?}", e);
+            if let Err(e) = vr.update() {
+                println!("Failed to update VR session state: {}", e);
             }
         }
     }

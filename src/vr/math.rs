@@ -1,7 +1,7 @@
 use glam::{Mat4, Vec3, Quat};
 use openxr as xr;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ViewProjection {
     pub view: Mat4,
     pub projection: Mat4,

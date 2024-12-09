@@ -3,7 +3,7 @@ use anyhow::Result;
 
 use super::math::ViewProjection;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FrameResources {
     pub frame_state: xr::FrameState,
     pub view_projections: Vec<ViewProjection>,
@@ -220,6 +220,74 @@ impl FrameManager {
 
     pub fn get_frame_stream(&self) -> Option<&xr::FrameStream<xr::Vulkan>> {
         self.frame_stream.as_ref()
+    }
+
+    pub fn get_stage(&self) -> Option<&xr::Space> {
+        self.stage.as_ref()
+    }
+
+    pub fn submit_frame_with_projection(
+        &mut self,
+        frame_state: &xr::FrameState,
+        views: &[xr::View],
+    ) -> Result<()> {
+        // Get view configuration for dimensions
+        let view_config = self.views.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("View configuration not initialized"))?;
+        let view_dimensions = &view_config[0]; // Both eyes use same dimensions
+
+        // Get mutable reference to swapchain for image operations
+        let swapchain = self.swapchain.as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Swapchain not initialized"))?;
+        
+        // Acquire and wait for swapchain image
+        let _image_index = swapchain.acquire_image()?;
+        swapchain.wait_image(xr::Duration::from_nanos(100_000_000))?;
+
+        // Create projection views
+        let projection_views: Vec<_> = views.iter()
+            .map(|view| xr::CompositionLayerProjectionView::new()
+                .pose(view.pose)
+                .fov(view.fov)
+                .sub_image(xr::SwapchainSubImage::new()
+                    .swapchain(swapchain)
+                    .image_array_index(0)
+                    .image_rect(xr::Rect2Di {
+                        offset: xr::Offset2Di { x: 0, y: 0 },
+                        extent: xr::Extent2Di {
+                            width: view_dimensions.recommended_image_rect_width as i32,
+                            height: view_dimensions.recommended_image_rect_height as i32,
+                        },
+                    })))
+            .collect();
+
+        // Get stage space
+        let stage = self.stage.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Stage space not initialized"))?;
+
+        // Create projection layer
+        let projection_layer = xr::CompositionLayerProjection::new()
+            .space(stage)
+            .views(&projection_views);
+
+        // Begin frame stream and submit
+        if let Some(frame_stream) = &mut self.frame_stream {
+            frame_stream.begin()?;
+            log::info!("Successfully began frame stream");
+
+            frame_stream.end(
+                frame_state.predicted_display_time,
+                xr::EnvironmentBlendMode::OPAQUE,
+                &[&projection_layer],
+            )?;
+            log::info!("Successfully submitted frame");
+
+            // Release the swapchain image after submission
+            swapchain.release_image()?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Frame stream not initialized"))
+        }
     }
 }
 
