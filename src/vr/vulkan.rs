@@ -28,29 +28,28 @@ pub fn create_vulkan_instance(
     get_instance_proc_addr: vk::PFN_vkGetInstanceProcAddr,
 ) -> Result<*const c_void> {
     unsafe {
-        log::warn!("Creating Vulkan instance with multiview support");
+        log::warn!("Creating Vulkan instance");
 
         // Create Vulkan instance through OpenXR
         let mut app_info = vk::ApplicationInfo::default();
         app_info.api_version = vk::make_api_version(0, 1, 2, 0);
 
-        // Enable required extensions
+        // Enable required extensions at instance level
         let extensions = [
-            vk::KhrMultiviewFn::name().as_ptr(),
             vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr(),
         ];
 
-        log::warn!("Enabling extensions:");
-        log::warn!("  KhrMultiview: {:?}", std::ffi::CStr::from_ptr(vk::KhrMultiviewFn::name().as_ptr()));
-        log::warn!("  KhrGetPhysicalDeviceProperties2: {:?}", std::ffi::CStr::from_ptr(vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr()));
+        log::warn!("Enabling instance extensions:");
+        log::warn!("  KhrGetPhysicalDeviceProperties2: {:?}", 
+            std::ffi::CStr::from_ptr(vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr()));
 
-        // Create instance info
         let mut create_info = vk::InstanceCreateInfo::default();
         create_info.p_application_info = &app_info;
         create_info.enabled_extension_count = extensions.len() as u32;
         create_info.pp_enabled_extension_names = extensions.as_ptr();
 
-        let get_instance_proc_addr = transmute::<vk::PFN_vkGetInstanceProcAddr, unsafe extern "system" fn(*const c_void, *const i8) -> Option<unsafe extern "system" fn()>>(get_instance_proc_addr);
+        let get_instance_proc_addr = transmute::<vk::PFN_vkGetInstanceProcAddr, 
+            unsafe extern "system" fn(*const c_void, *const i8) -> Option<unsafe extern "system" fn()>>(get_instance_proc_addr);
 
         log::warn!("Creating Vulkan instance through OpenXR");
         let vk_instance = xr_instance
@@ -97,7 +96,7 @@ pub fn create_vulkan_device(
             transmute(vk_instance)
         );
 
-        // Query supported features
+        // Query supported features from physical device
         let mut multiview_features = vk::PhysicalDeviceMultiviewFeatures {
             s_type: vk::StructureType::PHYSICAL_DEVICE_MULTIVIEW_FEATURES,
             p_next: std::ptr::null_mut(),
@@ -114,7 +113,7 @@ pub fn create_vulkan_device(
 
         vk_instance_raw.get_physical_device_features2(transmute(vk_physical_device), &mut features2);
         
-        log::warn!("Checking multiview support:");
+        log::warn!("Physical device multiview support:");
         log::warn!("  Multiview supported: {}", multiview_features.multiview != 0);
         log::warn!("  Multiview geometry shader: {}", multiview_features.multiview_geometry_shader != 0);
         log::warn!("  Multiview tessellation shader: {}", multiview_features.multiview_tessellation_shader != 0);
@@ -134,10 +133,13 @@ pub fn create_vulkan_device(
             p_queue_priorities: queue_priorities.as_ptr(),
         };
 
-        // Required extensions
+        // Required device extensions
         let extension_names = [
             vk::KhrMultiviewFn::name().as_ptr(),
         ];
+
+        log::warn!("Enabling device extensions:");
+        log::warn!("  KhrMultiview: {:?}", std::ffi::CStr::from_ptr(vk::KhrMultiviewFn::name().as_ptr()));
 
         // Enable multiview in device features
         let mut enabled_multiview = vk::PhysicalDeviceMultiviewFeatures {
