@@ -304,13 +304,15 @@ impl<'a> Renderer<'a> {
             cache: None,
         });
 
+        // Create depth texture
+        let size = wgpu::Extent3d {
+            width: config.width,
+            height: config.height,
+            depth_or_array_layers: 2, // Set array layers to 2 for stereo rendering
+        };
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Depth Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
+            size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -318,7 +320,17 @@ impl<'a> Renderer<'a> {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("VR Depth View"),
+            format: None,
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            aspect: wgpu::TextureAspect::DepthOnly,
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: 0,
+            array_layer_count: Some(2),
+        });
 
         Self {
             device,
@@ -366,7 +378,7 @@ impl<'a> Renderer<'a> {
                 size: wgpu::Extent3d {
                     width: new_size.width,
                     height: new_size.height,
-                    depth_or_array_layers: 1,
+                    depth_or_array_layers: 2, // Set array layers to 2 for stereo rendering
                 },
                 mip_level_count: 1,
                 sample_count: 1,
@@ -375,7 +387,16 @@ impl<'a> Renderer<'a> {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            self.depth_view = self.depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.depth_view = self.depth_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("VR Depth View"),
+                format: None,
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                aspect: wgpu::TextureAspect::DepthOnly,
+                base_mip_level: 0,
+                mip_level_count: None,
+                base_array_layer: 0,
+                array_layer_count: Some(2),
+            });
         }
     }
 
@@ -427,7 +448,7 @@ impl<'a> Renderer<'a> {
                         },
                     })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.depth_view,
+                        view: &self.depth_texture.create_view(&wgpu::TextureViewDescriptor::default()),
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(1.0),
                             store: wgpu::StoreOp::Store,
@@ -503,6 +524,33 @@ impl<'a> Renderer<'a> {
         let (width, height) = vr.get_swapchain_image_layout()
             .ok_or_else(|| anyhow::anyhow!("Failed to get swapchain image layout"))?;
 
+        // Resize depth texture to match swapchain dimensions
+        self.depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("VR Depth Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 2,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+
+        let depth_view = self.depth_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("VR Depth View"),
+            format: None,
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            aspect: wgpu::TextureAspect::DepthOnly,
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: 0,
+            array_layer_count: Some(2),
+        });
+
         // Get VR pipeline
         let vr_pipeline = vr.get_pipeline()
             .ok_or_else(|| anyhow::anyhow!("VR pipeline not initialized"))?;
@@ -528,15 +576,15 @@ impl<'a> Renderer<'a> {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
+                    view: &depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
-                occlusion_query_set: None,
                 timestamp_writes: None,
+                occlusion_query_set: None,
             });
 
             // Set the VR pipeline
@@ -553,8 +601,8 @@ impl<'a> Renderer<'a> {
                         view_proj.pose.position.x,
                         view_proj.pose.position.y,
                         view_proj.pose.position.z,
+                        1.0,
                     ],
-                    _padding: 0,
                 };
 
                 self.queue.write_buffer(&vr_pipeline.uniform_buffer, 0, bytemuck::cast_slice(&[vr_uniform]));
@@ -622,5 +670,23 @@ impl<'a> Renderer<'a> {
             RenderMode::VR(ref mut vr) => Some(vr),
             _ => None,
         }
+    }
+
+    fn create_depth_texture(&mut self, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
+        let size = wgpu::Extent3d {
+            width: config.width,
+            height: config.height,
+            depth_or_array_layers: 2, // Set array layers to 2 for stereo rendering
+        };
+        self.depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
     }
 } 

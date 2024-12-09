@@ -82,9 +82,14 @@ pub fn create_vulkan_device(
         queue_create_info.p_queue_priorities = queue_priorities.as_ptr();
         queue_create_info.queue_count = 1;
 
+        // Enable Vulkan 1.1 features including multiview
+        let mut features_v1_1 = vk::PhysicalDeviceVulkan11Features::default();
+        features_v1_1.multiview = vk::TRUE;
+
         let mut device_create_info = vk::DeviceCreateInfo::default();
         device_create_info.queue_create_info_count = 1;
         device_create_info.p_queue_create_infos = &queue_create_info;
+        device_create_info.p_next = &features_v1_1 as *const _ as *const c_void;
 
         let vk_device = xr_instance
             .create_vulkan_device(
@@ -115,7 +120,7 @@ pub fn wgpu_format_to_vulkan(format: wgpu::TextureFormat) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    //use pollster::FutureExt;
+    use pollster::FutureExt;
 
     // fn create_test_device() -> Option<wgpu::Device> {
     //     let instance = wgpu::Instance::default();

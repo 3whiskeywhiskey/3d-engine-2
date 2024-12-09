@@ -250,24 +250,21 @@ impl FrameManager {
         let stage = self.stage.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Stage space not initialized"))?;
 
-        // Create projection views - one for each eye
-        let mut projection_views = Vec::with_capacity(views.len());
+        // Create projection views with explicit sub-image rectangles
+        let mut projection_views = Vec::new();
         for (i, view) in views.iter().enumerate() {
-            log::info!("Creating projection view {} with pose: {:?}, fov: {:?}", i, view.pose, view.fov);
-            
+            let rect = xr::Rect2Di {
+                offset: xr::Offset2Di { x: 0, y: 0 },
+                extent: xr::Extent2Di {
+                    width: view_dimensions.recommended_image_rect_width as i32,
+                    height: view_dimensions.recommended_image_rect_height as i32,
+                },
+            };
+
             let sub_image = xr::SwapchainSubImage::new()
-                .swapchain(swapchain)
-                .image_array_index(0)
-                .image_rect(xr::Rect2Di {
-                    offset: xr::Offset2Di {
-                        x: 0,
-                        y: 0,
-                    },
-                    extent: xr::Extent2Di {
-                        width: view_dimensions.recommended_image_rect_width as i32,
-                        height: view_dimensions.recommended_image_rect_height as i32,
-                    },
-                });
+                .swapchain(&swapchain)
+                .image_array_index(i as u32)
+                .image_rect(rect);
 
             let projection_view = xr::CompositionLayerProjectionView::new()
                 .pose(view.pose)
@@ -294,16 +291,12 @@ impl FrameManager {
             frame_stream.begin()?;
             log::info!("Successfully began frame stream");
 
-            // Create and submit projection layer with required flags
-            let flags = xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA;
-
-            // Create layer using builder pattern
+            // Create layer for stereo rendering
             let layer = xr::CompositionLayerProjection::new()
-                .layer_flags(flags)
                 .space(stage)
                 .views(&projection_views);
 
-            log::info!("Created projection layer with {} views and flags {:?}", projection_views.len(), flags);
+            log::info!("Created projection layer with {} views", projection_views.len());
 
             // Submit frame with layer
             frame_stream.end(
@@ -311,7 +304,7 @@ impl FrameManager {
                 xr::EnvironmentBlendMode::OPAQUE,
                 &[&layer],
             )?;
-            log::info!("Successfully submitted frame with {} views", projection_views.len());
+            log::info!("Successfully submitted frame");
 
             // Release the swapchain image after submission
             swapchain.release_image()?;
@@ -320,6 +313,47 @@ impl FrameManager {
         } else {
             Err(anyhow::anyhow!("Frame stream not initialized"))
         }
+    }
+
+    pub fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("VR Depth Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 2,  // One layer per eye
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+
+        depth_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("VR Depth View"),
+            format: Some(wgpu::TextureFormat::Depth32Float),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            aspect: wgpu::TextureAspect::DepthOnly,
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: 0,
+            array_layer_count: Some(2),
+        })
+    }
+
+    pub fn create_swapchain_view(swapchain_texture: &wgpu::Texture) -> wgpu::TextureView {
+        swapchain_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("VR Swapchain View"),
+            format: None,
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            aspect: wgpu::TextureAspect::All,
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: 0,
+            array_layer_count: Some(2),
+        })
     }
 }
 
