@@ -47,10 +47,10 @@ impl CameraUniform {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct LightUniform {
-    direction: [f32; 4],
-    color: [f32; 4],
-    ambient: [f32; 4],
+pub struct LightUniform {
+    pub direction: [f32; 4],
+    pub color: [f32; 4],
+    pub ambient: [f32; 4],
 }
 
 impl LightUniform {
@@ -65,8 +65,8 @@ impl LightUniform {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct ModelUniform {
-    model_matrix: [[f32; 4]; 4],
+pub struct ModelUniform {
+    pub model_matrix: [[f32; 4]; 4],
 }
 
 impl ModelUniform {
@@ -605,7 +605,7 @@ impl<'a> Renderer<'a> {
                     ],
                 };
 
-                self.queue.write_buffer(&vr_pipeline.uniform_buffer, 0, bytemuck::cast_slice(&[vr_uniform]));
+                self.queue.write_buffer(&vr_pipeline.camera_buffer, 0, bytemuck::cast_slice(&[vr_uniform]));
 
                 // Set view index for multiview rendering
                 render_pass.set_viewport(
@@ -617,9 +617,9 @@ impl<'a> Renderer<'a> {
                     1.0,
                 );
 
-                // Set the VR uniform bind group
-                render_pass.set_bind_group(0, &vr_pipeline.uniform_bind_group, &[]);
-                render_pass.set_bind_group(1, &self.light_bind_group, &[]);
+                // Set the bind groups in the correct order
+                render_pass.set_bind_group(0, &vr_pipeline.camera_bind_group, &[]);
+                render_pass.set_bind_group(1, &vr_pipeline.light_bind_group, &[]);
 
                 // Render each object
                 for (model, transform) in &scene.objects {
@@ -632,7 +632,7 @@ impl<'a> Renderer<'a> {
 
                     let model_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("Model Bind Group"),
-                        layout: &self.model_bind_group_layout,
+                        layout: &vr_pipeline.model_bind_group_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
                                 binding: 0,
@@ -644,6 +644,7 @@ impl<'a> Renderer<'a> {
                     render_pass.set_bind_group(2, &model_bind_group, &[]);
 
                     for mesh in &model.meshes {
+                        // Set material bind group
                         render_pass.set_bind_group(3, &model.materials[mesh.material_index].bind_group, &[]);
                         render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                         render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);

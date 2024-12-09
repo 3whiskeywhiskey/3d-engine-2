@@ -3,6 +3,7 @@ use std::mem;
 use bytemuck::{Pod, Zeroable};
 use crate::model::ModelVertex;
 use std::num::NonZeroU32;
+use crate::renderer::{LightUniform, ModelUniform};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -15,9 +16,17 @@ pub struct VRUniform {
 
 pub struct VRPipeline {
     pub render_pipeline: wgpu::RenderPipeline,
-    pub bind_group_layout: wgpu::BindGroupLayout,
-    pub uniform_buffer: wgpu::Buffer,
-    pub uniform_bind_group: wgpu::BindGroup,
+    pub camera_bind_group_layout: wgpu::BindGroupLayout,
+    pub light_bind_group_layout: wgpu::BindGroupLayout,
+    pub model_bind_group_layout: wgpu::BindGroupLayout,
+    pub material_bind_group_layout: wgpu::BindGroupLayout,
+    pub camera_bind_group: wgpu::BindGroup,
+    pub light_bind_group: wgpu::BindGroup,
+    pub model_bind_group: wgpu::BindGroup,
+    pub material_bind_group: wgpu::BindGroup,
+    pub camera_buffer: wgpu::Buffer,
+    pub light_buffer: wgpu::Buffer,
+    pub model_buffer: wgpu::Buffer,
 }
 
 impl VRPipeline {
@@ -25,81 +34,190 @@ impl VRPipeline {
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
     ) -> Self {
-        // Create bind group layout
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("VR Bind Group Layout"),
+        // Create bind group layouts
+        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("VR Camera Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let light_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("VR Light Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let model_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("VR Model Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let material_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("VR Material Bind Group Layout"),
             entries: &[
+                // Diffuse texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
                     count: None,
                 },
+                // Diffuse sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Normal texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
                     count: None,
                 },
+                // Normal sampler
                 wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
         });
 
+        // Create default textures and samplers for material
+        let default_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Default Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let default_texture_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
         // Create uniform buffers
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Camera Uniform Buffer"),
-            size: std::mem::size_of::<VRUniform>() as u64,
+            label: Some("Camera Buffer"),
+            size: std::mem::size_of::<VRUniform>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let light_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Light Uniform Buffer"),
-            size: std::mem::size_of::<VRUniform>() as u64,
+            label: Some("Light Buffer"),
+            size: std::mem::size_of::<LightUniform>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let model_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Model Uniform Buffer"),
-            size: std::mem::size_of::<VRUniform>() as u64,
+            label: Some("Model Buffer"),
+            size: std::mem::size_of::<ModelUniform>() as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        // Create uniform bind group
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("VR Uniform Bind Group"),
-            layout: &bind_group_layout,
+        // Create bind groups
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Camera Bind Group"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+
+        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Light Bind Group"),
+            layout: &light_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: light_buffer.as_entire_binding(),
+            }],
+        });
+
+        let model_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Model Bind Group"),
+            layout: &model_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: model_buffer.as_entire_binding(),
+            }],
+        });
+
+        let material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Material Bind Group"),
+            layout: &material_bind_group_layout,
             entries: &[
+                // Diffuse texture
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::TextureView(&default_texture_view),
                 },
+                // Diffuse sampler
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: light_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::Sampler(&default_sampler),
                 },
+                // Normal texture
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: model_buffer.as_entire_binding(),
+                    resource: wgpu::BindingResource::TextureView(&default_texture_view),
+                },
+                // Normal sampler
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&default_sampler),
                 },
             ],
         });
@@ -107,14 +225,16 @@ impl VRPipeline {
         // Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("VR Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[wgpu::PushConstantRange {
-                stages: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                range: 0..std::mem::size_of::<u32>() as u32,
-            }],
+            bind_group_layouts: &[
+                &camera_bind_group_layout,
+                &light_bind_group_layout,
+                &model_bind_group_layout,
+                &material_bind_group_layout,
+            ],
+            push_constant_ranges: &[],
         });
 
-        // Load shader
+        // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("VR Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/vr.wgsl").into()),
@@ -167,9 +287,17 @@ impl VRPipeline {
 
         Self {
             render_pipeline,
-            bind_group_layout,
-            uniform_buffer: camera_buffer,
-            uniform_bind_group,
+            camera_bind_group_layout,
+            light_bind_group_layout,
+            model_bind_group_layout,
+            material_bind_group_layout,
+            camera_bind_group,
+            light_bind_group,
+            model_bind_group,
+            material_bind_group,
+            camera_buffer,
+            light_buffer,
+            model_buffer,
         }
     }
 
@@ -245,52 +373,71 @@ impl VRPipeline {
     }
 
     pub fn update_uniform(&self, queue: &wgpu::Queue, uniform: &VRUniform) {
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[*uniform]));
+        queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[*uniform]));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wgpu::*;
 
-    #[test]
-    fn test_pipeline_creation() {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            dx12_shader_compiler: Default::default(),
-            flags: wgpu::InstanceFlags::default(),
-            gles_minor_version: wgpu::Gles3MinorVersion::default(),
+    fn setup_test_device() -> (Device, SurfaceConfiguration) {
+        let instance = Instance::new(InstanceDescriptor {
+            backends: Backends::VULKAN,
+            ..Default::default()
         });
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            compatible_surface: None,
+
+        let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
+            power_preference: PowerPreference::HighPerformance,
             force_fallback_adapter: false,
-        }))
-        .unwrap();
+            compatible_surface: None,
+        })).unwrap();
+
         let (device, _) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
+            &DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_features: Features::MULTIVIEW,
+                required_limits: Limits::default(),
                 memory_hints: Default::default(),
             },
             None,
-        ))
-        .unwrap();
+        )).unwrap();
 
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        let config = SurfaceConfiguration {
+            usage: TextureUsages::RENDER_ATTACHMENT,
+            format: TextureFormat::Bgra8UnormSrgb,
             width: 1280,
             height: 720,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            present_mode: PresentMode::Fifo,
+            alpha_mode: CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
 
-        let pipeline = VRPipeline::new(&device, &config);
+        (device, config)
+    }
 
-        assert!(pipeline.uniform_buffer.size() >= std::mem::size_of::<VRUniform>() as u64);
+    #[test]
+    fn test_buffer_size() {
+        let (device, config) = setup_test_device();
+        
+        // Create VR pipeline using the main implementation
+        let vr_pipeline = VRPipeline::new(&device, &config);
+
+        // Test that the camera buffer size matches the uniform struct size
+        let camera_buffer_size = vr_pipeline.camera_buffer.size();
+        let expected_size = std::mem::size_of::<VRUniform>();
+        assert_eq!(camera_buffer_size, expected_size as u64);
+
+        // Test that the light buffer size matches the uniform struct size
+        let light_buffer_size = vr_pipeline.light_buffer.size();
+        let expected_size = std::mem::size_of::<LightUniform>();
+        assert_eq!(light_buffer_size, expected_size as u64);
+
+        // Test that the model buffer size matches the uniform struct size
+        let model_buffer_size = vr_pipeline.model_buffer.size();
+        let expected_size = std::mem::size_of::<ModelUniform>();
+        assert_eq!(model_buffer_size, expected_size as u64);
     }
 } 
