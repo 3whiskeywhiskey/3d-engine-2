@@ -1,77 +1,98 @@
 use std::ffi::c_void;
 use wgpu::hal::api::Vulkan;
 use anyhow::Result;
+use ash::vk;
 
-/// Extract Vulkan instance handle from wgpu device
-pub fn get_vulkan_instance_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
+pub fn create_vulkan_instance(xr_instance: &openxr::Instance, system: openxr::SystemId) -> Result<*const c_void> {
     unsafe {
-        device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
-            let vulkan_device = vulkan_device
-                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
-            
-            // Get the raw instance handle from the device
-            let raw_instance = vulkan_device
-                .shared_instance()
-                .raw_instance()
-                .handle();
+        // Create Vulkan entry point
+        let vk_entry = ash::Entry::load().map_err(|err| {
+            anyhow::anyhow!("Failed to load Vulkan entry point: {}", err)
+        })?;
 
-            let handle_value = std::mem::transmute_copy(&raw_instance);
-            Ok(handle_value)
-        })
-        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan instance"))?
+        // Get instance proc addr function
+        let get_instance_proc_addr = {
+            type Fn<T> = unsafe extern "system" fn(T, *const i8) -> Option<unsafe extern "system" fn()>;
+            type AshFn = Fn<vk::Instance>;
+            type OpenXrFn = Fn<*const c_void>;
+            std::mem::transmute::<AshFn, OpenXrFn>(vk_entry.static_fn().get_instance_proc_addr)
+        };
+
+        // Create Vulkan instance through OpenXR
+        let mut app_info = vk::ApplicationInfo::default();
+        app_info.api_version = vk::make_api_version(0, 1, 2, 0);
+
+        let mut create_info = vk::InstanceCreateInfo::default();
+        create_info.p_application_info = &app_info;
+
+        let vk_instance = xr_instance
+            .create_vulkan_instance(
+                system,
+                get_instance_proc_addr,
+                &create_info as *const _ as *const _,
+            )
+            .map_err(|err| anyhow::anyhow!("Failed to create Vulkan instance: {}", err))?
+            .map_err(|raw| anyhow::anyhow!("Vulkan error: {}", vk::Result::from_raw(raw)))?;
+
+        Ok(vk_instance as *const c_void)
     }
 }
 
-/// Extract Vulkan physical device handle from wgpu device
-pub fn get_vulkan_physical_device_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
+pub fn get_vulkan_physical_device(
+    xr_instance: &openxr::Instance,
+    system: openxr::SystemId,
+    vk_instance: *const c_void,
+) -> Result<*const c_void> {
     unsafe {
-        device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
-            let vulkan_device = vulkan_device
-                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
-            
-            // Get the raw physical device handle
-            let raw_physical_device = vulkan_device
-                .raw_physical_device();
+        let vk_physical_device = xr_instance
+            .vulkan_graphics_device(system, vk_instance)
+            .map_err(|err| anyhow::anyhow!("Failed to get Vulkan physical device: {}", err))?;
 
-            let handle_value = std::mem::transmute_copy(&raw_physical_device);
-            Ok(handle_value)
-        })
-        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan physical device"))?
+        Ok(vk_physical_device as *const c_void)
     }
 }
 
-/// Extract Vulkan device handle from wgpu device
-pub fn get_vulkan_device_from_wgpu(device: &wgpu::Device) -> Result<*const c_void> {
+pub fn create_vulkan_device(
+    xr_instance: &openxr::Instance,
+    system: openxr::SystemId,
+    vk_instance: *const c_void,
+    vk_physical_device: *const c_void,
+) -> Result<(*const c_void, u32, u32)> {
     unsafe {
-        device.as_hal::<Vulkan, _, Result<*const c_void>>(|vulkan_device| {
-            let vulkan_device = vulkan_device
-                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
-            
-            // Get the raw device handle
-            let raw_device = vulkan_device
-                .raw_device()
-                .handle();
+        // Get instance proc addr function
+        let vk_entry = ash::Entry::load().map_err(|err| {
+            anyhow::anyhow!("Failed to load Vulkan entry point: {}", err)
+        })?;
 
-            let handle_value = std::mem::transmute_copy(&raw_device);
-            Ok(handle_value)
-        })
-        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?
-    }
-}
+        let get_instance_proc_addr = {
+            type Fn<T> = unsafe extern "system" fn(T, *const i8) -> Option<unsafe extern "system" fn()>;
+            type AshFn = Fn<vk::Instance>;
+            type OpenXrFn = Fn<*const c_void>;
+            std::mem::transmute::<AshFn, OpenXrFn>(vk_entry.static_fn().get_instance_proc_addr)
+        };
 
-/// Get Vulkan queue family and queue index from wgpu device
-pub fn get_vulkan_queue_info_from_wgpu(device: &wgpu::Device) -> Result<(u32, u32)> {
-    unsafe {
-        device.as_hal::<Vulkan, _, Result<(u32, u32)>>(|vulkan_device| {
-            let vulkan_device = vulkan_device
-                .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
-            
-            // Get the queue family index from the device
-            let family_index = vulkan_device.queue_family_index();
-            
-            Ok((family_index, 0)) // Using first queue in family
-        })
-        .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan queue info"))?
+        // Create device through OpenXR
+        let queue_priorities = [1.0];
+        let mut queue_create_info = vk::DeviceQueueCreateInfo::default();
+        queue_create_info.queue_family_index = 0;
+        queue_create_info.p_queue_priorities = queue_priorities.as_ptr();
+        queue_create_info.queue_count = 1;
+
+        let mut device_create_info = vk::DeviceCreateInfo::default();
+        device_create_info.queue_create_info_count = 1;
+        device_create_info.p_queue_create_infos = &queue_create_info;
+
+        let vk_device = xr_instance
+            .create_vulkan_device(
+                system,
+                get_instance_proc_addr,
+                vk_physical_device,
+                &device_create_info as *const _ as *const _,
+            )
+            .map_err(|err| anyhow::anyhow!("Failed to create Vulkan device: {}", err))?
+            .map_err(|raw| anyhow::anyhow!("Vulkan error: {}", vk::Result::from_raw(raw)))?;
+
+        Ok((vk_device as *const c_void, 0, 0))
     }
 }
 

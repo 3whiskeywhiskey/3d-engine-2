@@ -2,17 +2,19 @@ use openxr as xr;
 use anyhow::Result;
 use wgpu;
 use std::fmt;
+use std::ffi::c_void;
 
 use super::math::ViewProjection;
 use super::pipeline::{VRPipeline, VRUniform};
 use super::vulkan::{
-    get_vulkan_instance_from_wgpu,
-    get_vulkan_physical_device_from_wgpu,
-    get_vulkan_device_from_wgpu,
-    get_vulkan_queue_info_from_wgpu,
+    create_vulkan_instance,
+    get_vulkan_physical_device,
+    create_vulkan_device,
     wgpu_format_to_vulkan,
 };
 use super::frame::{FrameManager, FrameResources};
+
+const XR_TARGET_VERSION: xr::Version = xr::Version::new(1, 2, 0);
 
 #[derive(Debug)]
 pub enum SessionState {
@@ -99,79 +101,29 @@ impl VRSystem {
         let requirements = self.instance.graphics_requirements::<xr::Vulkan>(self.system)?;
         log::info!("OpenXR graphics requirements: {:?}", requirements);
         
-        // Get Vulkan handles from wgpu
-        let vk_instance = get_vulkan_instance_from_wgpu(device)?;
-        let vk_physical_device = get_vulkan_physical_device_from_wgpu(device)?;
-        let vk_device = get_vulkan_device_from_wgpu(device)?;
-        let (queue_family_index, queue_index) = get_vulkan_queue_info_from_wgpu(device)?;
+        if requirements.min_api_version_supported > XR_TARGET_VERSION
+            || requirements.max_api_version_supported.major() < XR_TARGET_VERSION.major()
+        {
+            return Err(anyhow::anyhow!(
+                "OpenXR runtime requires Vulkan version > {}, < {}.0.0",
+                requirements.min_api_version_supported,
+                requirements.max_api_version_supported.major() + 1
+            ));
+        }
 
-        // Get Vulkan version from wgpu
-        let vk_version = unsafe {
-            device.as_hal::<wgpu::hal::api::Vulkan, _, Result<u32>>(|vulkan_device| {
-                let vulkan_device = vulkan_device
-                    .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
-                
-                // Get the Vulkan API version
-                let version = vulkan_device
-                    .shared_instance()
-                    .instance_api_version();
-                
-                Ok(version)
-            })
-            .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan version"))?
-        }?;
+        // Create Vulkan instance through OpenXR
+        let vk_instance = create_vulkan_instance(&self.instance, self.system)?;
 
-        let vk_major = vk_version >> 22;
-        let vk_minor = (vk_version >> 12) & 0x3ff;
-        let vk_patch = vk_version & 0xfff;
+        // Get physical device through OpenXR
+        let vk_physical_device = get_vulkan_physical_device(&self.instance, self.system, vk_instance)?;
 
-        log::info!("Available Vulkan version: {}.{}.{}", vk_major, vk_minor, vk_patch);
-
-        // Convert OpenXR version to comparable format
-        let min_version = requirements.min_api_version_supported;
-        let max_version = requirements.max_api_version_supported;
-
-        // Decode OpenXR version numbers
-        let min_major = (min_version.into_raw() >> 48) as u32;
-        let min_minor = ((min_version.into_raw() >> 32) & 0xFFFF) as u32;
-        let min_patch = (min_version.into_raw() & 0xFFFFFFFF) as u32;
-
-        let max_major = (max_version.into_raw() >> 48) as u32;
-        let max_minor = ((max_version.into_raw() >> 32) & 0xFFFF) as u32;
-        let max_patch = (max_version.into_raw() & 0xFFFFFFFF) as u32;
-
-        log::info!("OpenXR requires Vulkan version between {}.{}.{} and {}.{}.{}", 
-            min_major, min_minor, min_patch,
-            max_major, max_minor, max_patch);
-
-        // Instead of comparing versions, we'll use the maximum supported version
-        // This ensures we use a version that OpenXR supports
-        let target_version = unsafe {
-            device.as_hal::<wgpu::hal::api::Vulkan, _, Result<u32>>(|vulkan_device| {
-                let vulkan_device = vulkan_device
-                    .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?;
-                
-                // Create a new instance with the maximum supported version
-                let version = vulkan_device
-                    .shared_instance()
-                    .instance_api_version();
-                
-                // Cap the version to OpenXR's maximum supported version
-                let capped_version = std::cmp::min(
-                    version,
-                    ((max_major as u32) << 22) | ((max_minor as u32) << 12) | (max_patch as u32)
-                );
-                
-                Ok(capped_version)
-            })
-            .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan version"))?
-        }?;
-
-        let target_major = target_version >> 22;
-        let target_minor = (target_version >> 12) & 0x3ff;
-        let target_patch = target_version & 0xfff;
-
-        log::info!("Using Vulkan version: {}.{}.{}", target_major, target_minor, target_patch);
+        // Create device through OpenXR
+        let (vk_device, queue_family_index, queue_index) = create_vulkan_device(
+            &self.instance,
+            self.system,
+            vk_instance,
+            vk_physical_device,
+        )?;
 
         log::info!("Creating OpenXR session with Vulkan device info: queue_family={}, queue_index={}", 
             queue_family_index, queue_index);
