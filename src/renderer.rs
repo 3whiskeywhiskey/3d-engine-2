@@ -3,7 +3,6 @@ use std::sync::Arc;
 use wgpu::{
     util::DeviceExt,
     Device, Queue, RenderPipeline, Surface, SurfaceConfiguration,
-    BindGroup, BindGroupLayout, Buffer, Texture, TextureView,
 };
 use crate::{
     Scene,
@@ -18,7 +17,7 @@ pub enum ForcedMode {
     VR,
 }
 
-enum RenderMode {
+pub enum RenderMode {
     Standard,
     VR(VRSystem),
 }

@@ -6,8 +6,8 @@ mod tests;
 pub use camera::Camera;
 pub use transform::Transform;
 
-use std::sync::Arc;
-use wgpu::BindGroup;
+//use std::sync::Arc;
+//use wgpu::BindGroup;
 use glam::Vec3;
 use winit::keyboard::KeyCode;
 use std::time::Instant;
@@ -20,7 +20,7 @@ pub struct Scene {
     directional_light: Vec3,
     light_direction: Vec3,
     last_update: Instant,
-    camera_bind_group: Option<Arc<BindGroup>>,
+    //camera_bind_group: Option<Arc<BindGroup>>,
 }
 
 impl Scene {
@@ -32,7 +32,7 @@ impl Scene {
             directional_light: Vec3::new(1.0, 1.0, 1.0),
             ambient_light: Vec3::new(0.1, 0.1, 0.1),
             last_update: Instant::now(),
-            camera_bind_group: None,
+            //camera_bind_group: None,
         }
     }
 

@@ -1,6 +1,4 @@
 use super::*;
-use approx::assert_relative_eq;
-use serial_test::serial;
 
 #[test]
 fn test_scene_creation() {
