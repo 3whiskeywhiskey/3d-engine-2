@@ -189,10 +189,12 @@ impl VRPipeline {
         let model_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Model Bind Group"),
             layout: &model_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: model_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: model_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         let material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -304,10 +306,9 @@ impl VRPipeline {
     pub fn create_swapchain_view(
         &self,
         device: &wgpu::Device,
-        _image_index: u32,
         width: u32,
         height: u32,
-    ) -> Result<wgpu::TextureView, anyhow::Error> {
+    ) -> wgpu::TextureView {
         // Create texture descriptor for the swapchain image
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("VR Swapchain Texture"),
@@ -325,7 +326,7 @@ impl VRPipeline {
         });
 
         // Create texture view with array layers
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("VR Swapchain View"),
             format: None,
             dimension: Some(wgpu::TextureViewDimension::D2Array),
@@ -334,9 +335,7 @@ impl VRPipeline {
             mip_level_count: None,
             base_array_layer: 0,
             array_layer_count: Some(2),
-        });
-
-        Ok(view)
+        })
     }
 
     pub fn create_depth_texture(

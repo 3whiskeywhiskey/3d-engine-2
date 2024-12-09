@@ -3,31 +3,39 @@ use std::ffi::c_void;
 use openxr as xr;
 use anyhow::Result;
 use ash::vk;
+use std::mem::transmute;
+
+pub fn wgpu_format_to_vulkan(format: wgpu::TextureFormat) -> u32 {
+    match format {
+        wgpu::TextureFormat::Bgra8UnormSrgb => 50,  // VK_FORMAT_B8G8R8A8_SRGB
+        wgpu::TextureFormat::Rgba8UnormSrgb => 43,  // VK_FORMAT_R8G8B8A8_SRGB
+        wgpu::TextureFormat::R8Unorm => 9,          // VK_FORMAT_R8_UNORM
+        wgpu::TextureFormat::Rgba8Unorm => 37,      // VK_FORMAT_R8G8B8A8_UNORM
+        wgpu::TextureFormat::Bgra8Unorm => 44,      // VK_FORMAT_B8G8R8A8_UNORM
+        _ => panic!("Unsupported texture format"),
+    }
+}
+
+pub struct VulkanContext {
+    pub instance: *const c_void,
+    pub physical_device: *const c_void,
+    pub device: *const c_void,
+}
 
 pub fn create_vulkan_instance(
     xr_instance: &xr::Instance,
     system: xr::SystemId,
+    get_instance_proc_addr: vk::PFN_vkGetInstanceProcAddr,
 ) -> Result<*const c_void> {
     unsafe {
-        // Create Vulkan entry point
-        let vk_entry = ash::Entry::load().map_err(|err| {
-            anyhow::anyhow!("Failed to load Vulkan entry point: {}", err)
-        })?;
-
-        // Get instance proc addr function
-        let get_instance_proc_addr = {
-            type Fn<T> = unsafe extern "system" fn(T, *const i8) -> Option<unsafe extern "system" fn()>;
-            type AshFn = Fn<vk::Instance>;
-            type OpenXrFn = Fn<*const c_void>;
-            std::mem::transmute::<AshFn, OpenXrFn>(vk_entry.static_fn().get_instance_proc_addr)
-        };
-
         // Create Vulkan instance through OpenXR
         let mut app_info = vk::ApplicationInfo::default();
         app_info.api_version = vk::make_api_version(0, 1, 2, 0);
 
         let mut create_info = vk::InstanceCreateInfo::default();
         create_info.p_application_info = &app_info;
+
+        let get_instance_proc_addr = transmute::<vk::PFN_vkGetInstanceProcAddr, unsafe extern "system" fn(*const c_void, *const i8) -> Option<unsafe extern "system" fn()>>(get_instance_proc_addr);
 
         let vk_instance = xr_instance
             .create_vulkan_instance(
@@ -45,11 +53,11 @@ pub fn create_vulkan_instance(
 pub fn get_vulkan_physical_device(
     xr_instance: &xr::Instance,
     system: xr::SystemId,
-    _vk_instance: *const c_void,
+    vk_instance: *const c_void,
 ) -> Result<*const c_void> {
     unsafe {
         let vk_physical_device = xr_instance
-            .vulkan_graphics_device(system, _vk_instance)
+            .vulkan_graphics_device(system, vk_instance)
             .map_err(|err| anyhow::anyhow!("Failed to get Vulkan physical device: {}", err))?;
 
         Ok(vk_physical_device as *const c_void)
@@ -59,22 +67,11 @@ pub fn get_vulkan_physical_device(
 pub fn create_vulkan_device(
     xr_instance: &xr::Instance,
     system: xr::SystemId,
-    _vk_instance: *const c_void,
+    vk_instance: *const c_void,
     vk_physical_device: *const c_void,
+    get_instance_proc_addr: vk::PFN_vkGetInstanceProcAddr,
 ) -> Result<(*const c_void, u32, u32)> {
     unsafe {
-        // Get instance proc addr function
-        let vk_entry = ash::Entry::load().map_err(|err| {
-            anyhow::anyhow!("Failed to load Vulkan entry point: {}", err)
-        })?;
-
-        let get_instance_proc_addr = {
-            type Fn<T> = unsafe extern "system" fn(T, *const i8) -> Option<unsafe extern "system" fn()>;
-            type AshFn = Fn<vk::Instance>;
-            type OpenXrFn = Fn<*const c_void>;
-            std::mem::transmute::<AshFn, OpenXrFn>(vk_entry.static_fn().get_instance_proc_addr)
-        };
-
         // Create device through OpenXR
         let queue_priorities = [1.0];
         let mut queue_create_info = vk::DeviceQueueCreateInfo::default();
@@ -86,10 +83,25 @@ pub fn create_vulkan_device(
         let mut features_v1_1 = vk::PhysicalDeviceVulkan11Features::default();
         features_v1_1.multiview = vk::TRUE;
 
+        // Enable base Vulkan features
+        let mut features = vk::PhysicalDeviceFeatures2::default();
+        features.p_next = &features_v1_1 as *const _ as *mut c_void;
+
+        // Create device info
         let mut device_create_info = vk::DeviceCreateInfo::default();
         device_create_info.queue_create_info_count = 1;
         device_create_info.p_queue_create_infos = &queue_create_info;
-        device_create_info.p_next = &features_v1_1 as *const _ as *const c_void;
+        device_create_info.p_next = &features as *const _ as *const c_void;
+
+        // Enable required extensions
+        let extensions = [
+            vk::KhrMultiviewFn::name().as_ptr(),
+            vk::KhrMaintenance1Fn::name().as_ptr(),
+        ];
+        device_create_info.enabled_extension_count = extensions.len() as u32;
+        device_create_info.pp_enabled_extension_names = extensions.as_ptr();
+
+        let get_instance_proc_addr = transmute::<vk::PFN_vkGetInstanceProcAddr, unsafe extern "system" fn(*const c_void, *const i8) -> Option<unsafe extern "system" fn()>>(get_instance_proc_addr);
 
         let vk_device = xr_instance
             .create_vulkan_device(
@@ -105,78 +117,9 @@ pub fn create_vulkan_device(
     }
 }
 
-/// Convert WGPU texture format to Vulkan format
-pub fn wgpu_format_to_vulkan(format: wgpu::TextureFormat) -> u32 {
-    match format {
-        wgpu::TextureFormat::Bgra8UnormSrgb => 50,  // VK_FORMAT_B8G8R8A8_SRGB
-        wgpu::TextureFormat::Rgba8UnormSrgb => 43,  // VK_FORMAT_R8G8B8A8_SRGB
-        wgpu::TextureFormat::R8Unorm => 9,          // VK_FORMAT_R8_UNORM
-        wgpu::TextureFormat::Rgba8Unorm => 37,      // VK_FORMAT_R8G8B8A8_UNORM
-        wgpu::TextureFormat::Bgra8Unorm => 44,      // VK_FORMAT_B8G8R8A8_UNORM
-        _ => panic!("Unsupported texture format"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pollster::FutureExt;
-
-    // fn create_test_device() -> Option<wgpu::Device> {
-    //     let instance = wgpu::Instance::default();
-        
-    //     let adapter = instance
-    //         .request_adapter(&wgpu::RequestAdapterOptions {
-    //             power_preference: wgpu::PowerPreference::LowPower,
-    //             force_fallback_adapter: true,
-    //             compatible_surface: None,
-    //         })
-    //         .block_on()?;
-
-    //     let (device, _) = adapter
-    //         .request_device(
-    //             &wgpu::DeviceDescriptor {
-    //                 label: None,
-    //                 required_features: wgpu::Features::empty(),
-    //                 required_limits: wgpu::Limits::downlevel_defaults(),
-    //                 memory_hints: Default::default(),
-    //             },
-    //             None,
-    //         )
-    //         .block_on()
-    //         .ok()?;
-
-    //     Some(device)
-    // }
-
-    // #[test]
-    // fn test_vulkan_handle_extraction() {
-    //     if let Some(device) = create_test_device() {
-    //         // Test instance extraction
-    //         let instance = get_vulkan_instance_from_wgpu(&device);
-    //         assert!(instance.is_ok(), "Failed to get Vulkan instance");
-    //         assert!(!instance.unwrap().is_null(), "Vulkan instance is null");
-
-    //         // Test physical device extraction
-    //         let physical_device = get_vulkan_physical_device_from_wgpu(&device);
-    //         assert!(physical_device.is_ok(), "Failed to get Vulkan physical device");
-    //         assert!(!physical_device.unwrap().is_null(), "Vulkan physical device is null");
-
-    //         // Test device extraction
-    //         let logical_device = get_vulkan_device_from_wgpu(&device);
-    //         assert!(logical_device.is_ok(), "Failed to get Vulkan logical device");
-    //         assert!(!logical_device.unwrap().is_null(), "Vulkan logical device is null");
-
-    //         // Test queue info extraction
-    //         let queue_info = get_vulkan_queue_info_from_wgpu(&device);
-    //         assert!(queue_info.is_ok(), "Failed to get Vulkan queue info");
-    //         let (family, index) = queue_info.unwrap();
-    //         assert!(family < 16, "Queue family index out of reasonable range"); // Most GPUs have < 16 queue families
-    //         assert!(index == 0, "Expected first queue in family");
-    //     } else {
-    //         println!("Skipping Vulkan handle extraction test - no suitable GPU adapter available");
-    //     }
-    // }
 
     #[test]
     fn test_vulkan_format_conversion() {

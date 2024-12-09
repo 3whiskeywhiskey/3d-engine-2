@@ -1,351 +1,353 @@
-use openxr as xr;
+use std::ffi::c_void;
 use anyhow::Result;
-use wgpu;
-use std::fmt;
-use ash::vk::Format;
+use ash::vk;
+use openxr as xr;
+use wgpu::TextureFormat;
+use glam::Mat4;
+use glam::Quat;
+use glam::Vec3;
 
-use super::math::ViewProjection;
-use super::pipeline::{VRPipeline, VRUniform};
 use super::vulkan::{
     create_vulkan_instance,
     get_vulkan_physical_device,
     create_vulkan_device,
+    wgpu_format_to_vulkan,
 };
-use super::frame::{FrameManager, FrameResources};
 
-const XR_TARGET_VERSION: xr::Version = xr::Version::new(1, 2, 0);
-
-#[derive(Debug)]
-pub enum SessionState {
-    Idle,
-    Ready,
-    Visible,
-    Focused {
-        resources: FrameResources,
-    },
-    Running {
-        resources: FrameResources,
-    },
-    Stopping,
-    Stopped,
-}
+use super::pipeline::VRPipeline;
+use super::math::ViewProjection;
 
 pub struct VRSystem {
-    pub instance: openxr::Instance,
-    pub system: openxr::SystemId,
-    pub frame_manager: Option<FrameManager>,
-    pub view_configuration: Option<openxr::ViewConfigurationProperties>,
-    pub views: Option<Vec<openxr::ViewConfigurationView>>,
-    pub swapchain_format: wgpu::TextureFormat,
+    pub instance: xr::Instance,
+    pub system: xr::SystemId,
+    pub session: xr::Session<xr::Vulkan>,
+    pub frame_wait: xr::FrameWaiter,
+    pub frame_stream: xr::FrameStream<xr::Vulkan>,
+    pub swapchain: xr::Swapchain<xr::Vulkan>,
+    pub swapchain_resolution: (u32, u32),
+    pub reference_space: xr::Space,
+    pub stage_space: xr::Space,
+    pub view_configuration_views: Vec<xr::ViewConfigurationView>,
     pub pipeline: Option<VRPipeline>,
-    pub width: u32,
-    pub height: u32,
-    pub session_state: SessionState,
-}
-
-impl fmt::Debug for VRSystem {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("VRSystem")
-            .field("system", &self.system)
-            .field("swapchain_format", &self.swapchain_format)
-            .field("session_state", &self.session_state)
-            .finish()
-    }
+    swapchain_format: TextureFormat,
 }
 
 impl VRSystem {
-    pub fn new() -> anyhow::Result<Self> {
-        // Create entry point
-        let entry = openxr::Entry::linked();
+    pub fn new() -> Result<Self> {
+        // Create OpenXR instance
+        let xr_entry = xr::Entry::linked();
 
-        // Required extensions for our application
-        let mut required_extensions = openxr::ExtensionSet::default();
-        required_extensions.khr_vulkan_enable2 = true;  // Enable Vulkan 2 support
-        required_extensions.khr_composition_layer_depth = true;  // Enable depth composition
+        // Check available extensions
+        let available_extensions = xr_entry.enumerate_extensions()
+            .map_err(|err| anyhow::anyhow!("Failed to enumerate OpenXR extensions: {}", err))?;
 
-        // Create instance (skip validation layers for now)
-        let app_info = openxr::ApplicationInfo {
-            application_name: "WGPU 3D Viewer",
-            application_version: 1,
-            engine_name: "No Engine",
-            engine_version: 1,
-        };
+        let mut enabled_extensions = xr::ExtensionSet::default();
+        enabled_extensions.khr_vulkan_enable2 = available_extensions.khr_vulkan_enable2;
 
-        let instance = entry.create_instance(
-            &app_info,
-            &required_extensions,
-            &[],  // No validation layers for now
-        )?;
-
-        // Get the system (HMD) with Vulkan graphics API
-        let system = instance.system(openxr::FormFactor::HEAD_MOUNTED_DISPLAY)?;
-        log::info!("Successfully created OpenXR system with HMD form factor");
-
-        // Verify Vulkan support
-        let supported_form_factor = instance.enumerate_environment_blend_modes(system, openxr::ViewConfigurationType::PRIMARY_STEREO)?;
-        log::info!("Supported environment blend modes: {:?}", supported_form_factor);
-        
-        if supported_form_factor.is_empty() {
-            return Err(anyhow::anyhow!("System does not support PRIMARY_STEREO view configuration"));
+        if !enabled_extensions.khr_vulkan_enable2 {
+            return Err(anyhow::anyhow!("OpenXR Vulkan support not available"));
         }
 
-        // Get view configuration and views
-        let views = match instance.enumerate_view_configuration_views(
-            system,
-            openxr::ViewConfigurationType::PRIMARY_STEREO,
-        ) {
-            Ok(views) => {
-                log::info!("View configuration views: {:?}", views);
-                Some(views)
-            },
-            Err(e) => {
-                log::error!("Failed to enumerate view configuration views: {:?}", e);
-                return Err(e.into());
-            }
+        let app_info = xr::ApplicationInfo {
+            application_name: "wgpu-3d-viewer",
+            application_version: 0,
+            engine_name: "wgpu-3d-viewer",
+            engine_version: 0,
         };
+
+        let instance = xr_entry
+            .create_instance(&app_info, &enabled_extensions, &[])
+            .map_err(|err| anyhow::anyhow!("Failed to create OpenXR instance: {}", err))?;
+
+        // Get system ID
+        let system = instance
+            .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
+            .map_err(|err| anyhow::anyhow!("Failed to get system ID: {}", err))?;
+
+        // Check for opaque display support
+        if !instance
+            .enumerate_environment_blend_modes(system, xr::ViewConfigurationType::PRIMARY_STEREO)
+            .unwrap_or_default()
+            .iter()
+            .any(|&blend_mode| blend_mode == xr::EnvironmentBlendMode::OPAQUE)
+        {
+            return Err(anyhow::anyhow!("OpenXR opaque blend mode not supported"));
+        }
+
+        // Check Vulkan requirements
+        let xr::vulkan::Requirements {
+            max_api_version_supported,
+            min_api_version_supported,
+        } = instance
+            .graphics_requirements::<xr::Vulkan>(system)
+            .map_err(|err| anyhow::anyhow!("Failed to get Vulkan requirements: {}", err))?;
+
+        // Get view configuration
+        let view_configuration_views = instance
+            .enumerate_view_configuration_views(system, xr::ViewConfigurationType::PRIMARY_STEREO)
+            .map_err(|err| anyhow::anyhow!("Failed to get view configuration: {}", err))?;
+
+        // Create Vulkan instance
+        let vk_entry = unsafe { ash::Entry::load() }.map_err(|err| {
+            anyhow::anyhow!("Failed to load Vulkan entry point: {}", err)
+        })?;
+
+        let get_instance_proc_addr = vk_entry.static_fn().get_instance_proc_addr;
+
+        let vk_instance = create_vulkan_instance(&instance, system, get_instance_proc_addr)?;
+
+        // Get physical device
+        let vk_physical_device = get_vulkan_physical_device(&instance, system, vk_instance)?;
+
+        // Create logical device
+        let (vk_device, queue_family_index, queue_index) = create_vulkan_device(
+            &instance,
+            system,
+            vk_instance,
+            vk_physical_device,
+            get_instance_proc_addr,
+        )?;
+
+        // Create session
+        let (session, frame_wait, frame_stream) = unsafe {
+            instance
+                .create_session::<xr::Vulkan>(
+                    system,
+                    &xr::vulkan::SessionCreateInfo {
+                        instance: vk_instance as _,
+                        physical_device: vk_physical_device as _,
+                        device: vk_device as _,
+                        queue_family_index,
+                        queue_index,
+                    },
+                )
+                .map_err(|err| anyhow::anyhow!("Failed to create session: {}", err))?
+        };
+
+        // Create reference space
+        let reference_space = session
+            .create_reference_space(
+                xr::ReferenceSpaceType::LOCAL,
+                xr::Posef::IDENTITY,
+            )
+            .map_err(|err| anyhow::anyhow!("Failed to create reference space: {}", err))?;
+
+        // Create stage space
+        let stage_space = session
+            .create_reference_space(
+                xr::ReferenceSpaceType::STAGE,
+                xr::Posef::IDENTITY,
+            )
+            .map_err(|err| anyhow::anyhow!("Failed to create stage space: {}", err))?;
+
+        // Create swapchain
+        let swapchain_formats = session
+            .enumerate_swapchain_formats()
+            .map_err(|err| anyhow::anyhow!("Failed to get swapchain formats: {}", err))?;
+
+        let color_format = TextureFormat::Rgba8UnormSrgb;
+        let color_format_vulkan = wgpu_format_to_vulkan(color_format);
+
+        if !swapchain_formats.contains(&color_format_vulkan) {
+            return Err(anyhow::anyhow!("Swapchain format not supported"));
+        }
+
+        let resolution = view_configuration_views[0];
+        let swapchain = session
+            .create_swapchain(&xr::SwapchainCreateInfo {
+                create_flags: xr::SwapchainCreateFlags::EMPTY,
+                usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
+                    | xr::SwapchainUsageFlags::SAMPLED,
+                format: color_format_vulkan,
+                sample_count: 1,
+                width: resolution.recommended_image_rect_width,
+                height: resolution.recommended_image_rect_height,
+                face_count: 1,
+                array_size: 2,
+                mip_count: 1,
+            })
+            .map_err(|err| anyhow::anyhow!("Failed to create swapchain: {}", err))?;
 
         Ok(Self {
             instance,
             system,
-            frame_manager: None,
-            view_configuration: None,
-            views,
-            swapchain_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            session,
+            frame_wait,
+            frame_stream,
+            swapchain,
+            swapchain_resolution: (
+                resolution.recommended_image_rect_width,
+                resolution.recommended_image_rect_height,
+            ),
+            reference_space,
+            stage_space,
+            view_configuration_views: vec![resolution],
             pipeline: None,
-            width: 0,
-            height: 0,
-            session_state: SessionState::Idle,
+            swapchain_format: color_format,
         })
     }
 
     pub fn initialize_session(&mut self, device: &wgpu::Device) -> Result<()> {
-        // Initialize pipeline first
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: self.swapchain_format,
-            width: self.width,
-            height: self.height,
+            width: self.swapchain_resolution.0,
+            height: self.swapchain_resolution.1,
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
 
-        let pipeline = VRPipeline::new(device, &config);
-        self.pipeline = Some(pipeline);
-        log::info!("Successfully initialized VR pipeline");
-
-        // Get and validate graphics requirements
-        let requirements = self.instance.graphics_requirements::<xr::Vulkan>(self.system)?;
-        log::info!("OpenXR graphics requirements: {:?}", requirements);
-        log::info!("Target Vulkan version: {}", XR_TARGET_VERSION);
-        
-        if requirements.min_api_version_supported > XR_TARGET_VERSION
-            || requirements.max_api_version_supported.major() < XR_TARGET_VERSION.major()
-        {
-            return Err(anyhow::anyhow!(
-                "OpenXR runtime requires Vulkan version > {}, < {}.0.0",
-                requirements.min_api_version_supported,
-                requirements.max_api_version_supported.major() + 1
-            ));
-        }
-
-        // Create Vulkan instance through OpenXR
-        log::info!("Creating Vulkan instance through OpenXR...");
-        let vk_instance = create_vulkan_instance(&self.instance, self.system)?;
-        log::info!("Successfully created Vulkan instance");
-
-        // Get physical device through OpenXR
-        log::info!("Getting Vulkan physical device through OpenXR...");
-        let vk_physical_device = get_vulkan_physical_device(&self.instance, self.system, vk_instance)?;
-        log::info!("Successfully got Vulkan physical device");
-
-        // Create device through OpenXR
-        log::info!("Creating Vulkan device through OpenXR...");
-        let (vk_device, queue_family_index, queue_index) = create_vulkan_device(
-            &self.instance,
-            self.system,
-            vk_instance,
-            vk_physical_device,
-        )?;
-        log::info!("Successfully created Vulkan device");
-
-        log::info!("Creating OpenXR session with Vulkan device info: queue_family={}, queue_index={}", 
-            queue_family_index, queue_index);
-
-        // Create session with proper Vulkan device info
-        let vk_session_create_info = xr::vulkan::SessionCreateInfo {
-            instance: vk_instance,
-            physical_device: vk_physical_device,
-            device: vk_device,
-            queue_family_index,
-            queue_index,
-        };
-
-        // Create OpenXR session
-        let (session, frame_waiter, frame_stream) = unsafe {
-            match self.instance.create_session::<xr::Vulkan>(self.system, &vk_session_create_info) {
-                Ok(result) => {
-                    log::info!("Successfully created OpenXR session");
-                    result
-                },
-                Err(e) => {
-                    log::error!("Failed to create OpenXR session: {:?}", e);
-                    return Err(e.into());
-                }
-            }
-        };
-
-        // Initialize frame manager with session and wait for it to be ready
-        let mut frame_manager = FrameManager::new();
-        if let Some(views) = &self.views {
-            frame_manager.initialize_session(session, frame_waiter, frame_stream, views.clone());
-            self.frame_manager = Some(frame_manager);
-        }
-
-        // Get view configuration and views
-        self.view_configuration = Some(match self.instance.view_configuration_properties(
-            self.system,
-            xr::ViewConfigurationType::PRIMARY_STEREO,
-        ) {
-            Ok(config) => {
-                log::info!("View configuration: {:?}", config);
-                config
-            },
-            Err(e) => {
-                log::error!("Failed to get view configuration: {:?}", e);
-                return Err(e.into());
-            }
-        });
-
-        // Wait for session to be ready
-        let mut session_state = xr::SessionState::UNKNOWN;
-        let mut sync_attempt = 0;
-        let max_sync_attempts = 50; // 5 seconds with 100ms sleep
-
-        while session_state != xr::SessionState::READY && sync_attempt < max_sync_attempts {
-            sync_attempt += 1;
-            log::info!("Waiting for session readiness (attempt {}/{})", sync_attempt, max_sync_attempts);
-           
-            let mut event_storage = xr::EventDataBuffer::new();
-            while let Some(event) = self.instance.poll_event(&mut event_storage)? {
-                match event {
-                    xr::Event::SessionStateChanged(state_event) => {
-                        session_state = state_event.state();
-                        log::info!("Session state changed to: {:?}", session_state);
-                        match session_state {
-                            xr::SessionState::READY => {
-                                log::info!("Session is ready, beginning session...");
-                                // Begin session when ready
-                                if let Some(frame_manager) = &mut self.frame_manager {
-                                    if let Some(session) = frame_manager.get_session() {
-                                        session.begin(xr::ViewConfigurationType::PRIMARY_STEREO)?;
-                                        log::info!("Session begun successfully");
-
-                                        // Create a reference space for head tracking
-                                        let space = session.create_reference_space(
-                                            xr::ReferenceSpaceType::VIEW,
-                                            xr::Posef::IDENTITY,
-                                        )?;
-                                        log::info!("Successfully created reference space");
-
-                                        // Create swapchain after beginning session
-                                        if let Some(views) = &self.views {
-                                            // Verify view configuration
-                                            assert_eq!(views.len(), 2, "Expected exactly 2 views for stereo rendering");
-                                            assert_eq!(views[0], views[1], "Expected identical view configurations");
-
-                                            let swapchain_create_info = xr::SwapchainCreateInfo {
-                                                create_flags: xr::SwapchainCreateFlags::EMPTY,
-                                                usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
-                                                    | xr::SwapchainUsageFlags::SAMPLED,
-                                                format: Format::R8G8B8A8_SRGB.as_raw() as u32,
-                                                sample_count: 1,
-                                                width: views[0].recommended_image_rect_width,
-                                                height: views[0].recommended_image_rect_height,
-                                                face_count: 1,
-                                                array_size: 2,
-                                                mip_count: 1,
-                                            };
-
-                                            match session.create_swapchain(&swapchain_create_info) {
-                                                Ok(swapchain) => {
-                                                    log::info!("Successfully created swapchain");
-                                                    
-                                                    // Enumerate swapchain images immediately
-                                                    let _images = swapchain.enumerate_images()?;
-                                                    log::info!("Successfully enumerated {} swapchain images", _images.len());
-                                                    
-                                                    frame_manager.initialize_resources(swapchain, space);
-
-                                                    // Don't try to submit frames immediately - wait for session to be fully running
-                                                    self.session_state = SessionState::Ready;
-                                                    return Ok(());
-                                                }
-                                                Err(e) => {
-                                                    log::error!("Failed to create swapchain: {:?}", e);
-                                                    return Err(e.into());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            xr::SessionState::STOPPING => {
-                                log::info!("Session is stopping");
-                                self.session_state = SessionState::Stopping;
-                            }
-                            xr::SessionState::EXITING | xr::SessionState::LOSS_PENDING => {
-                                log::info!("Session is exiting or lost");
-                                self.session_state = SessionState::Stopped;
-                                return Ok(());
-                            }
-                            _ => {}
-                        }
-                    }
-                    xr::Event::InstanceLossPending(_) => {
-                        log::info!("Instance loss pending");
-                        return Ok(());
-                    }
-                    xr::Event::EventsLost(e) => {
-                        log::error!("Lost {} events", e.lost_event_count());
-                    }
-                    _ => {}
-                }
-            }
-
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-
-        if sync_attempt >= max_sync_attempts {
-            return Err(anyhow::anyhow!("Session failed to reach ready state after {} attempts", max_sync_attempts));
-        }
-
+        self.pipeline = Some(VRPipeline::new(device, &config));
         Ok(())
     }
 
     pub fn begin_frame(&mut self) -> Result<xr::FrameState> {
-        if let Some(frame_manager) = &mut self.frame_manager {
-            frame_manager.begin_frame()
-        } else {
-            Err(anyhow::anyhow!("Frame manager not initialized"))
-        }
+        let frame_state = self.frame_wait
+            .wait()
+            .map_err(|err| anyhow::anyhow!("Failed to wait for frame: {}", err))?;
+
+        self.frame_stream
+            .begin()
+            .map_err(|err| anyhow::anyhow!("Failed to begin frame: {}", err))?;
+
+        Ok(frame_state)
     }
 
     pub fn acquire_swapchain_image(&mut self) -> Result<u32> {
-        if let Some(frame_manager) = &mut self.frame_manager {
-            frame_manager.acquire_swapchain_image()
-        } else {
-            Err(anyhow::anyhow!("Frame manager not initialized"))
-        }
+        self.swapchain
+            .acquire_image()
+            .map_err(|err| anyhow::anyhow!("Failed to acquire swapchain image: {}", err))
+    }
+
+    pub fn wait_swapchain_image(&mut self) -> Result<()> {
+        self.swapchain
+            .wait_image(xr::Duration::INFINITE)
+            .map_err(|err| anyhow::anyhow!("Failed to wait for swapchain image: {}", err))
     }
 
     pub fn release_swapchain_image(&mut self) -> Result<()> {
-        if let Some(frame_manager) = &mut self.frame_manager {
-            frame_manager.release_swapchain_image()
-        } else {
-            Err(anyhow::anyhow!("Frame manager not initialized"))
+        self.swapchain
+            .release_image()
+            .map_err(|err| anyhow::anyhow!("Failed to release swapchain image: {}", err))
+    }
+
+    pub fn get_view_projections(&mut self, frame_state: &xr::FrameState) -> Result<Vec<ViewProjection>> {
+        let (_, views) = self.session.locate_views(
+            xr::ViewConfigurationType::PRIMARY_STEREO,
+            frame_state.predicted_display_time,
+            &self.reference_space,
+        ).map_err(|err| anyhow::anyhow!("Failed to locate views: {}", err))?;
+
+        let mut view_projections = Vec::new();
+        for view in views.into_iter() {
+            let fov = view.fov;
+            let projection = Mat4::perspective_infinite_rh(
+                fov.angle_right - fov.angle_left,
+                fov.angle_up - fov.angle_down,
+                0.05,
+            );
+
+            // Convert OpenXR pose to view matrix
+            let orientation = view.pose.orientation;
+            let position = view.pose.position;
+            let rotation = Mat4::from_quat(Quat::from_xyzw(
+                orientation.x,
+                orientation.y,
+                orientation.z,
+                orientation.w,
+            ));
+            let translation = Mat4::from_translation(Vec3::new(
+                position.x,
+                position.y,
+                position.z,
+            ));
+            let view_matrix = (rotation * translation).inverse();
+            
+            view_projections.push(ViewProjection {
+                view: view_matrix,
+                projection,
+                pose: view.pose,
+                fov,
+            });
         }
+
+        Ok(view_projections)
+    }
+
+    pub fn get_swapchain_image_layout(&self) -> Option<(u32, u32)> {
+        Some(self.swapchain_resolution)
+    }
+
+    pub fn get_pipeline(&self) -> Option<&VRPipeline> {
+        self.pipeline.as_ref()
+    }
+
+    pub fn submit_frame(
+        &mut self,
+        frame_state: xr::FrameState,
+        view_projections: &[ViewProjection],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        let mut projection_views = Vec::new();
+        for (i, view_proj) in view_projections.iter().enumerate() {
+            projection_views.push(
+                xr::CompositionLayerProjectionView::new()
+                    .pose(view_proj.pose)
+                    .fov(view_proj.fov)
+                    .sub_image(
+                        xr::SwapchainSubImage::new()
+                            .swapchain(&self.swapchain)
+                            .image_array_index(i as u32)
+                            .image_rect(xr::Rect2Di {
+                                offset: xr::Offset2Di { x: 0, y: 0 },
+                                extent: xr::Extent2Di {
+                                    width: width as i32,
+                                    height: height as i32,
+                                },
+                            }),
+                    ),
+            );
+        }
+
+        let layer = xr::CompositionLayerProjection::new()
+            .space(&self.reference_space)
+            .views(&projection_views);
+
+        let layers: &[&xr::CompositionLayerBase<xr::Vulkan>] = &[&layer];
+
+        self.frame_stream
+            .end(
+                frame_state.predicted_display_time,
+                xr::EnvironmentBlendMode::OPAQUE,
+                layers,
+            )
+            .map_err(|err| anyhow::anyhow!("Failed to end frame: {}", err))
+    }
+
+    pub fn update(&mut self) -> Result<()> {
+        let mut event_storage = xr::EventDataBuffer::new();
+        while let Some(event) = self.instance.poll_event(&mut event_storage)? {
+            match event {
+                xr::Event::SessionStateChanged(state_event) => {
+                    let session_state = state_event.state();
+                    log::info!("Session state changed to: {:?}", session_state);
+                    match session_state {
+                        xr::SessionState::READY => {
+                            self.session.begin(xr::ViewConfigurationType::PRIMARY_STEREO)?;
+                        }
+                        xr::SessionState::STOPPING => {
+                            self.session.end()?;
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     pub fn is_hmd_available(&self) -> bool {
@@ -357,224 +359,12 @@ impl VRSystem {
     }
 
     pub fn get_view_configuration(&self) -> Result<xr::ViewConfigurationProperties> {
-        Ok(self.instance.view_configuration_properties(
-            self.system,
-            xr::ViewConfigurationType::PRIMARY_STEREO,
-        )?)
+        self.instance
+            .view_configuration_properties(self.system, xr::ViewConfigurationType::PRIMARY_STEREO)
+            .map_err(|err| anyhow::anyhow!("Failed to get view configuration: {}", err))
     }
 
-    pub fn get_view_configuration_views(&self) -> Result<Vec<xr::ViewConfigurationView>> {
-        Ok(self.instance.enumerate_view_configuration_views(
-            self.system,
-            xr::ViewConfigurationType::PRIMARY_STEREO,
-        )?)
-    }
-
-    pub fn get_views(&mut self, frame_state: &xr::FrameState) -> Result<Vec<xr::View>> {
-        if let Some(frame_manager) = &self.frame_manager {
-            frame_manager.get_views(frame_state)
-        } else {
-            Err(anyhow::anyhow!("Frame manager not initialized"))
-        }
-    }
-
-    pub fn get_view_projections(&mut self, frame_state: &xr::FrameState) -> Result<Vec<ViewProjection>> {
-        if let Some(frame_manager) = &self.frame_manager {
-            frame_manager.get_view_projections(frame_state)
-        } else {
-            Err(anyhow::anyhow!("Frame manager not initialized"))
-        }
-    }
-
-    pub fn get_swapchain_image_layout(&self) -> Option<(u32, u32)> {
-        self.frame_manager.as_ref().and_then(|fm| fm.get_swapchain_image_layout())
-    }
-
-    pub fn get_swapchain_format(&self) -> wgpu::TextureFormat {
+    pub fn get_swapchain_format(&self) -> TextureFormat {
         self.swapchain_format
-    }
-
-    pub fn set_swapchain_format(&mut self, format: wgpu::TextureFormat) {
-        self.swapchain_format = format;
-    }
-
-    pub fn get_pipeline(&self) -> Option<&VRPipeline> {
-        self.pipeline.as_ref()
-    }
-
-    pub fn update_view_uniforms(&self, queue: &wgpu::Queue, view_proj: &ViewProjection) -> Result<()> {
-        if let Some(pipeline) = &self.pipeline {
-            let uniform = VRUniform {
-                view_proj: (view_proj.projection * view_proj.view).to_cols_array_2d(),
-                view: view_proj.view.to_cols_array_2d(),
-                proj: view_proj.projection.to_cols_array_2d(),
-                eye_position: [
-                    view_proj.pose.position.x,
-                    view_proj.pose.position.y,
-                    view_proj.pose.position.z,
-                    1.0,
-                ],
-            };
-            pipeline.update_uniform(queue, &uniform);
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Pipeline not initialized"))
-        }
-    }
-
-    pub fn update(&mut self) -> Result<()> {
-        if let Some(frame_manager) = &mut self.frame_manager {
-            // Process all pending events
-            let mut event_storage = xr::EventDataBuffer::new();
-            while let Some(event) = self.instance.poll_event(&mut event_storage)? {
-                match event {
-                    xr::Event::SessionStateChanged(state_event) => {
-                        let session_state = state_event.state();
-                        log::info!("Session state changed to: {:?}", session_state);
-                        match session_state {
-                            xr::SessionState::READY => {
-                                log::info!("Session is ready");
-                                self.session_state = SessionState::Ready;
-                            }
-                            xr::SessionState::SYNCHRONIZED => {
-                                log::info!("Session is synchronized");
-                                // Wait for synchronization before proceeding
-                                if let Ok(frame_state) = frame_manager.wait_frame() {
-                                    if let Some(frame_stream) = frame_manager.get_frame_stream_mut() {
-                                        frame_stream.begin().map_err(|e| anyhow::anyhow!("Failed to begin frame: {}", e))?;
-                                    } else {
-                                        return Err(anyhow::anyhow!("Frame stream not initialized"));
-                                    }
-
-                                    // Get initial view projections with proper timing
-                                    let view_projections = frame_manager.get_view_projections(&frame_state)?;
-
-                                    self.session_state = SessionState::Running {
-                                        resources: FrameResources {
-                                            frame_state,
-                                            view_projections,
-                                        }
-                                    };
-                                }
-                            }
-                            xr::SessionState::STOPPING => {
-                                log::info!("Session is stopping");
-                                // End session
-                                if let Some(session) = frame_manager.get_session() {
-                                    session.end()?;
-                                }
-                                self.session_state = SessionState::Stopping;
-                            }
-                            xr::SessionState::IDLE => {
-                                log::info!("Session is idle");
-                                self.session_state = SessionState::Idle;
-                            }
-                            xr::SessionState::EXITING => {
-                                log::info!("Session is exiting");
-                                if let Some(session) = frame_manager.get_session() {
-                                    session.end()?;
-                                }
-                                self.session_state = SessionState::Stopped;
-                            }
-                            xr::SessionState::LOSS_PENDING => {
-                                log::warn!("Session loss is pending");
-                            }
-                            xr::SessionState::VISIBLE => {
-                                log::info!("Session is visible");
-                                self.session_state = SessionState::Visible;
-                            }
-                            xr::SessionState::FOCUSED => {
-                                log::info!("Session is focused");
-                                // Only change application type after we're fully synchronized and focused
-                                if let SessionState::Running { resources } = &self.session_state {
-                                    self.session_state = SessionState::Focused {
-                                        resources: resources.clone(),
-                                    };
-                                }
-                            }
-                            other => {
-                                log::info!("Unhandled session state: {:?}", other);
-                            }
-                        }
-                    }
-                    xr::Event::InstanceLossPending(_) => {
-                        log::warn!("OpenXR instance loss pending");
-                    }
-                    xr::Event::EventsLost(_) => {
-                        log::warn!("Lost some OpenXR events");
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn is_session_running(&self) -> bool {
-        matches!(self.session_state, SessionState::Running { .. })
-    }
-
-    pub fn get_swapchain(&self) -> Result<&xr::Swapchain<xr::Vulkan>> {
-        if let Some(frame_manager) = &self.frame_manager {
-            frame_manager.get_swapchain()
-                .ok_or_else(|| anyhow::anyhow!("Swapchain not initialized"))
-        } else {
-            Err(anyhow::anyhow!("Frame manager not initialized"))
-        }
-    }
-
-    pub fn get_swapchain_handle(&self) -> Result<xr::sys::Swapchain> {
-        if let Some(frame_manager) = &self.frame_manager {
-            if let Some(swapchain) = frame_manager.get_swapchain() {
-                Ok(swapchain.as_raw())
-            } else {
-                Err(anyhow::anyhow!("Swapchain not initialized"))
-            }
-        } else {
-            Err(anyhow::anyhow!("Frame manager not initialized"))
-        }
-    }
-
-    pub fn verify_swapchain(&self) -> Result<()> {
-        if let Some(frame_manager) = &self.frame_manager {
-            if frame_manager.get_swapchain().is_some() {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Swapchain not initialized"))
-            }
-        } else {
-            Err(anyhow::anyhow!("Frame manager not initialized"))
-        }
-    }
-
-    pub fn submit_frame(
-        &mut self,
-        frame_state: xr::FrameState,
-        view_projections: &[ViewProjection],
-        width: u32,
-        height: u32,
-    ) -> Result<()> {
-        if let Some(frame_manager) = &mut self.frame_manager {
-            frame_manager.submit_frame(frame_state, view_projections, width, height)
-        } else {
-            Err(anyhow::anyhow!("Frame manager not initialized"))
-        }
-    }
-
-    pub fn init_pipeline(&mut self, device: &wgpu::Device) -> anyhow::Result<()> {
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: self.swapchain_format,
-            width: self.width,
-            height: self.height,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-
-        let pipeline = VRPipeline::new(device, &config);
-        self.pipeline = Some(pipeline);
-        Ok(())
     }
 } 

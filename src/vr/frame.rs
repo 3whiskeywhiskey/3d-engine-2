@@ -109,6 +109,9 @@ impl FrameManager {
         let swapchain = self.swapchain.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Swapchain not initialized"))?;
 
+        let stage = self.stage.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Stage space not initialized"))?;
+
         // Create composition layer views
         let mut views = Vec::with_capacity(view_projections.len());
         for (i, view_proj) in view_projections.iter().enumerate() {
@@ -130,19 +133,19 @@ impl FrameManager {
             views.push(view);
         }
 
-        // End frame with composition layers
+        // Submit frame with composition layers
         if let Some(frame_stream) = &mut self.frame_stream {
-            if let Some(stage) = &self.stage {
-                let projection_layer = xr::CompositionLayerProjection::new().space(stage).views(&views);
-                frame_stream.end(
-                    frame_state.predicted_display_time,
-                    xr::EnvironmentBlendMode::OPAQUE,
-                    &[&projection_layer],
-                )?;
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Stage not initialized"))
-            }
+            let layer = xr::CompositionLayerProjection::new()
+                .space(stage)
+                .views(&views);
+
+            log::info!("Submitting frame with {} views", views.len());
+            frame_stream.end(
+                frame_state.predicted_display_time,
+                xr::EnvironmentBlendMode::OPAQUE,
+                &[&layer],
+            )?;
+            Ok(())
         } else {
             Err(anyhow::anyhow!("Frame stream not initialized"))
         }

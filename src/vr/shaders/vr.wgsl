@@ -1,114 +1,62 @@
 struct CameraUniform {
-    view_proj: mat4x4<f32>,
     view: mat4x4<f32>,
     proj: mat4x4<f32>,
-    camera_pos: vec4<f32>,
-};
+    view_proj: mat4x4<f32>,
+    view_pos: vec4<f32>,
+}
 
 struct LightUniform {
-    direction: vec4<f32>,
-    color: vec4<f32>,
-    ambient: vec4<f32>,
-};
+    position: vec3<f32>,
+    color: vec3<f32>,
+    _padding: f32,
+}
 
 struct ModelUniform {
     model_matrix: mat4x4<f32>,
-};
+}
 
-@group(0) @binding(0)
-var<uniform> camera: CameraUniform;
-
-@group(1) @binding(0)
-var<uniform> light: LightUniform;
-
-@group(2) @binding(0)
-var<uniform> model: ModelUniform;
-
-@group(3) @binding(0)
-var t_diffuse: texture_2d<f32>;
-@group(3) @binding(1)
-var s_diffuse: sampler;
-@group(3) @binding(2)
-var t_normal: texture_2d<f32>;
-@group(3) @binding(3)
-var s_normal: sampler;
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
+@group(1) @binding(0) var<uniform> light: LightUniform;
+@group(2) @binding(0) var<uniform> model: ModelUniform;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
-    @location(1) tex_coords: vec2<f32>,
-    @location(2) normal: vec3<f32>,
-    @location(3) tangent: vec4<f32>,
-};
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+}
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) tex_coords: vec2<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) world_pos: vec3<f32>,
-    @location(3) tangent: vec3<f32>,
-    @location(4) bitangent: vec3<f32>,
-};
+    @location(0) world_position: vec3<f32>,
+    @location(1) world_normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) view_pos: vec3<f32>,
+}
 
 @vertex
 fn vs_main(
-    model_in: VertexInput,
+    model_vertex: VertexInput,
 ) -> VertexOutput {
     var out: VertexOutput;
-    let world_pos = model.model_matrix * vec4<f32>(model_in.position, 1.0);
-    out.clip_position = camera.view_proj * world_pos;
-    out.tex_coords = model_in.tex_coords;
-    
-    // Transform normal and tangent to world space
-    let normal = normalize((model.model_matrix * vec4<f32>(model_in.normal, 0.0)).xyz);
-    let tangent = normalize((model.model_matrix * vec4<f32>(model_in.tangent.xyz, 0.0)).xyz);
-    let bitangent = cross(normal, tangent) * model_in.tangent.w;
-    
-    out.normal = normal;
-    out.tangent = tangent;
-    out.bitangent = bitangent;
-    out.world_pos = world_pos.xyz;
+    let world_position = model.model_matrix * vec4<f32>(model_vertex.position, 1.0);
+    out.world_position = world_position.xyz;
+    out.world_normal = normalize(model_vertex.normal);
+    out.clip_position = camera.view_proj * world_position;
+    out.uv = model_vertex.uv;
+    out.view_pos = camera.view_pos.xyz;
     return out;
-}
-
-fn calculate_normal(in: VertexOutput) -> vec3<f32> {
-    // Sample normal map and transform from [0,1] to [-1,1] range
-    let normal_sample = textureSample(t_normal, s_normal, in.tex_coords);
-    let normal_map = normal_sample.xyz * 2.0 - 1.0;
-    
-    // Construct TBN matrix for transforming from tangent to world space
-    let N = normalize(in.normal);
-    let T = normalize(in.tangent);
-    let B = normalize(in.bitangent);
-    let TBN = mat3x3<f32>(T, B, N);
-    
-    // Transform normal from tangent space to world space
-    return normalize(TBN * normal_map);
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let normal = calculate_normal(in);
-    let light_dir = normalize(light.direction.xyz);
-    let view_dir = normalize(camera.camera_pos.xyz - in.world_pos);
-    let half_dir = normalize(view_dir - light_dir);
+    let ambient = vec3<f32>(0.05, 0.05, 0.05);
+    let light_dir = normalize(light.position - in.world_position);
+    let view_dir = normalize(in.view_pos - in.world_position);
+    let half_dir = normalize(view_dir + light_dir);
 
-    // Sample texture
-    let tex_color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    let diffuse = max(dot(in.world_normal, light_dir), 0.0);
+    let specular = pow(max(dot(in.world_normal, half_dir), 0.0), 32.0);
+    let color = ambient + light.color * (diffuse + specular);
 
-    // Ambient
-    let ambient = light.ambient.rgb * tex_color.rgb;
-
-    // Diffuse
-    let diff = max(dot(normal, -light_dir), 0.0);
-    let diffuse = light.color.rgb * diff * tex_color.rgb;
-
-    // Specular
-    let spec = pow(max(dot(normal, half_dir), 0.0), 32.0);
-    let specular = light.color.rgb * spec * 0.5;
-
-    // Ambient occlusion (simple)
-    let ao = max(dot(normal, vec3<f32>(0.0, 1.0, 0.0)), 0.0) * 0.2 + 0.8;
-
-    let final_color = (ambient + diffuse + specular) * ao;
-    return vec4<f32>(final_color, tex_color.a);
+    return vec4<f32>(color, 1.0);
 } 

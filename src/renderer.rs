@@ -555,8 +555,8 @@ impl<'a> Renderer<'a> {
         let vr_pipeline = vr.get_pipeline()
             .ok_or_else(|| anyhow::anyhow!("VR pipeline not initialized"))?;
 
-        // Create array texture view for the swapchain image
-        let swapchain_view = vr_pipeline.create_swapchain_view(&self.device, image_index, width, height)?;
+        // Create swapchain view
+        let swapchain_view = vr_pipeline.create_swapchain_view(&self.device, width, height);
 
         // Begin render pass
         {
