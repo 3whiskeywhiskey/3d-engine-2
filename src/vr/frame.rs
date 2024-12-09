@@ -241,49 +241,77 @@ impl FrameManager {
             .ok_or_else(|| anyhow::anyhow!("Swapchain not initialized"))?;
         
         // Acquire and wait for swapchain image
-        let _image_index = swapchain.acquire_image()?;
+        let image_index = swapchain.acquire_image()?;
+        log::info!("Acquired swapchain image {}", image_index);
         swapchain.wait_image(xr::Duration::from_nanos(100_000_000))?;
-
-        // Create projection views
-        let projection_views: Vec<_> = views.iter()
-            .map(|view| xr::CompositionLayerProjectionView::new()
-                .pose(view.pose)
-                .fov(view.fov)
-                .sub_image(xr::SwapchainSubImage::new()
-                    .swapchain(swapchain)
-                    .image_array_index(0)
-                    .image_rect(xr::Rect2Di {
-                        offset: xr::Offset2Di { x: 0, y: 0 },
-                        extent: xr::Extent2Di {
-                            width: view_dimensions.recommended_image_rect_width as i32,
-                            height: view_dimensions.recommended_image_rect_height as i32,
-                        },
-                    })))
-            .collect();
+        log::info!("Successfully waited for swapchain image");
 
         // Get stage space
         let stage = self.stage.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Stage space not initialized"))?;
 
-        // Create projection layer
-        let projection_layer = xr::CompositionLayerProjection::new()
-            .space(stage)
-            .views(&projection_views);
+        // Create projection views - one for each eye
+        let mut projection_views = Vec::with_capacity(views.len());
+        for (i, view) in views.iter().enumerate() {
+            log::info!("Creating projection view {} with pose: {:?}, fov: {:?}", i, view.pose, view.fov);
+            
+            let sub_image = xr::SwapchainSubImage::new()
+                .swapchain(swapchain)
+                .image_array_index(0)
+                .image_rect(xr::Rect2Di {
+                    offset: xr::Offset2Di {
+                        x: 0,
+                        y: 0,
+                    },
+                    extent: xr::Extent2Di {
+                        width: view_dimensions.recommended_image_rect_width as i32,
+                        height: view_dimensions.recommended_image_rect_height as i32,
+                    },
+                });
 
-        // Begin frame stream and submit
+            let projection_view = xr::CompositionLayerProjectionView::new()
+                .pose(view.pose)
+                .fov(view.fov)
+                .sub_image(sub_image);
+
+            log::info!("Created projection view {} with dimensions: {}x{}", 
+                i, 
+                view_dimensions.recommended_image_rect_width,
+                view_dimensions.recommended_image_rect_height
+            );
+
+            projection_views.push(projection_view);
+        }
+
+        // Ensure we have valid views
+        if projection_views.is_empty() {
+            return Err(anyhow::anyhow!("No projection views created"));
+        }
+        log::info!("Created {} projection views", projection_views.len());
+
+        // Begin frame stream
         if let Some(frame_stream) = &mut self.frame_stream {
             frame_stream.begin()?;
             log::info!("Successfully began frame stream");
 
+            // Create and submit projection layer with required flags
+            let layer = xr::CompositionLayerProjection::new()
+                .layer_flags(xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA)
+                .space(stage)
+                .views(&projection_views);
+            log::info!("Created projection layer with {} views", projection_views.len());
+
+            // Submit frame with layer
             frame_stream.end(
                 frame_state.predicted_display_time,
                 xr::EnvironmentBlendMode::OPAQUE,
-                &[&projection_layer],
+                &[&layer],
             )?;
-            log::info!("Successfully submitted frame");
+            log::info!("Successfully submitted frame with {} views", projection_views.len());
 
             // Release the swapchain image after submission
             swapchain.release_image()?;
+            log::info!("Successfully released swapchain image");
             Ok(())
         } else {
             Err(anyhow::anyhow!("Frame stream not initialized"))
