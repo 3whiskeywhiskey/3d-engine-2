@@ -15,7 +15,8 @@ pub fn get_vulkan_instance_from_wgpu(device: &wgpu::Device) -> Result<*const c_v
                 .raw_instance()
                 .handle();
 
-            Ok(std::mem::transmute(raw_instance))
+            let handle_value = std::mem::transmute_copy(&raw_instance);
+            Ok(handle_value)
         })
         .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan instance"))?
     }
@@ -32,7 +33,8 @@ pub fn get_vulkan_physical_device_from_wgpu(device: &wgpu::Device) -> Result<*co
             let raw_physical_device = vulkan_device
                 .raw_physical_device();
 
-            Ok(std::mem::transmute(raw_physical_device))
+            let handle_value = std::mem::transmute_copy(&raw_physical_device);
+            Ok(handle_value)
         })
         .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan physical device"))?
     }
@@ -50,7 +52,8 @@ pub fn get_vulkan_device_from_wgpu(device: &wgpu::Device) -> Result<*const c_voi
                 .raw_device()
                 .handle();
 
-            Ok(std::mem::transmute(raw_device))
+            let handle_value = std::mem::transmute_copy(&raw_device);
+            Ok(handle_value)
         })
         .ok_or_else(|| anyhow::anyhow!("Failed to get Vulkan device"))?
     }

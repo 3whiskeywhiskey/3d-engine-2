@@ -30,21 +30,26 @@ impl FrameManager {
         }
     }
 
-    pub fn initialize(
+    pub fn initialize_session(
         &mut self,
         session: xr::Session<xr::Vulkan>,
         frame_waiter: xr::FrameWaiter,
         frame_stream: xr::FrameStream<xr::Vulkan>,
-        swapchain: xr::Swapchain<xr::Vulkan>,
-        stage: xr::Space,
         views: Vec<xr::ViewConfigurationView>,
     ) {
         self.session = Some(session);
         self.frame_waiter = Some(frame_waiter);
         self.frame_stream = Some(frame_stream);
+        self.views = Some(views);
+    }
+
+    pub fn initialize_resources(
+        &mut self,
+        swapchain: xr::Swapchain<xr::Vulkan>,
+        stage: xr::Space,
+    ) {
         self.swapchain = Some(swapchain);
         self.stage = Some(stage);
-        self.views = Some(views);
     }
 
     pub fn get_session(&self) -> Option<&xr::Session<xr::Vulkan>> {
@@ -54,13 +59,12 @@ impl FrameManager {
     pub fn begin_frame(&mut self) -> Result<xr::FrameState> {
         if let (Some(frame_waiter), Some(frame_stream)) = (&mut self.frame_waiter, &mut self.frame_stream) {
             frame_waiter.wait()?;
-            let frame_state = xr::FrameState {
-                predicted_display_time: xr::Time::from_nanos(0),  // We'll get the actual time from the runtime later
+            frame_stream.begin()?;
+            Ok(xr::FrameState {
+                predicted_display_time: xr::Time::from_nanos(0),
                 predicted_display_period: xr::Duration::from_nanos(0),
-                should_render: true,  // We'll assume we should always render for now
-            };
-            frame_stream.begin().map_err(|e| anyhow::anyhow!("Failed to begin frame: {:?}", e))?;
-            Ok(frame_state)
+                should_render: true,
+            })
         } else {
             Err(anyhow::anyhow!("Frame waiter or stream not initialized"))
         }

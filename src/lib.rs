@@ -23,11 +23,7 @@ impl<'a> State<'a> {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: if cfg!(target_os = "macos") {
-                wgpu::Backends::METAL
-            } else {
-                wgpu::Backends::VULKAN
-            },
+            backends: wgpu::Backends::VULKAN,
             dx12_shader_compiler: Default::default(),
             flags: wgpu::InstanceFlags::DEBUG | wgpu::InstanceFlags::VALIDATION,
             gles_minor_version: wgpu::Gles3MinorVersion::default(),
@@ -46,8 +42,37 @@ impl<'a> State<'a> {
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("Primary Device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_features: wgpu::Features::MULTIVIEW 
+                    | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                    | wgpu::Features::PUSH_CONSTANTS
+                    | wgpu::Features::DEPTH_CLIP_CONTROL
+                    | wgpu::Features::MULTI_DRAW_INDIRECT
+                    | wgpu::Features::TEXTURE_BINDING_ARRAY 
+                    | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+                required_limits: wgpu::Limits {
+                    max_push_constant_size: 128,
+                    max_texture_array_layers: 32,  // Required for multiview
+                    max_vertex_buffers: 8,
+                    max_storage_buffers_per_shader_stage: 8,
+                    max_storage_textures_per_shader_stage: 8,
+                    max_sampled_textures_per_shader_stage: 16,
+                    max_samplers_per_shader_stage: 16,
+                    max_bindings_per_bind_group: 1000,
+                    max_uniform_buffers_per_shader_stage: 12,
+                    max_uniform_buffer_binding_size: 16384,
+                    max_storage_buffer_binding_size: 128 * 1024 * 1024,  // 128MB
+                    max_vertex_buffer_array_stride: 2048,
+                    max_compute_workgroup_storage_size: 16384,
+                    max_compute_invocations_per_workgroup: 256,
+                    max_compute_workgroup_size_x: 256,
+                    max_compute_workgroup_size_y: 256,
+                    max_compute_workgroup_size_z: 64,
+                    max_compute_workgroups_per_dimension: 65535,
+                    max_texture_dimension_1d: 8192,
+                    max_texture_dimension_2d: 8192,
+                    max_texture_dimension_3d: 2048,
+                    ..wgpu::Limits::default()
+                },
                 memory_hints: Default::default(),
             },
             None,
@@ -64,7 +89,7 @@ impl<'a> State<'a> {
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
+            view_formats: vec![surface_format],
             desired_maximum_frame_latency: 2,
         };
 

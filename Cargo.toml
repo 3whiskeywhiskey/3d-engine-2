@@ -27,6 +27,7 @@ base64 = "0.21"
 approx = "0.5.1"
 openxr = { version = "0.17", features = ["linked"] }
 clap = { version = "4.4", features = ["derive"] }
+ash = "0.37"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"

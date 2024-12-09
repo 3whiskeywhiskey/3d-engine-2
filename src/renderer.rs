@@ -229,8 +229,14 @@ impl<'a> Renderer<'a> {
         let mode = match forced_mode {
             ForcedMode::Standard => RenderMode::Standard,
             ForcedMode::VR => {
-                if let Ok(vr) = VRSystem::new() {
-                    RenderMode::VR(vr)
+                if let Ok(mut vr) = VRSystem::new() {
+                    // Initialize VR session with the device
+                    if let Err(e) = vr.initialize_session(&device) {
+                        log::error!("Failed to initialize VR session: {}", e);
+                        RenderMode::Standard
+                    } else {
+                        RenderMode::VR(vr)
+                    }
                 } else {
                     RenderMode::Standard
                 }
