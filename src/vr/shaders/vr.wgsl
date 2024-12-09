@@ -1,8 +1,8 @@
 struct CameraUniform {
-    view: mat4x4<f32>,
-    proj: mat4x4<f32>,
-    view_proj: mat4x4<f32>,
-    view_pos: vec4<f32>,
+    view: array<mat4x4<f32>, 2>,
+    proj: array<mat4x4<f32>, 2>,
+    view_proj: array<mat4x4<f32>, 2>,
+    view_pos: array<vec4<f32>, 2>,
 }
 
 struct LightUniform {
@@ -36,14 +36,15 @@ struct VertexOutput {
 @vertex
 fn vs_main(
     model_vertex: VertexInput,
+    @builtin(view_index) view_id: i32,
 ) -> VertexOutput {
     var out: VertexOutput;
     let world_position = model.model_matrix * vec4<f32>(model_vertex.position, 1.0);
     out.world_position = world_position.xyz;
     out.world_normal = normalize(model_vertex.normal);
-    out.clip_position = camera.view_proj * world_position;
+    out.clip_position = camera.view_proj[view_id] * world_position;
     out.uv = model_vertex.uv;
-    out.view_pos = camera.view_pos.xyz;
+    out.view_pos = camera.view_pos[view_id].xyz;
     return out;
 }
 

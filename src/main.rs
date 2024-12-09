@@ -50,35 +50,31 @@ fn main() {
                 match event {
                     WindowEvent::KeyboardInput {
                         event: KeyEvent {
-                            physical_key: PhysicalKey::Code(key_code),
-                            state: key_state,
+                            physical_key: PhysicalKey::Code(KeyCode::Escape),
                             ..
                         },
                         ..
                     } => {
-                        let pressed = key_state == ElementState::Pressed;
-                        match key_code {
-                            KeyCode::Escape => {
-                                if pressed {
-                                    mouse_captured = false;
-                                    state.window().set_cursor_grab(winit::window::CursorGrabMode::None)
-                                        .unwrap();
-                                    state.window().set_cursor_visible(true);
-                                }
-                            }
-                            _ => state.scene.process_keyboard(key_code, pressed),
-                        }
+                        state.window().set_cursor_grab(winit::window::CursorGrabMode::None)
+                            .unwrap();
+                        state.window().set_cursor_visible(true);
+                        mouse_captured = false;
                     }
                     WindowEvent::MouseInput {
                         state: ElementState::Pressed,
                         button: MouseButton::Left,
                         ..
                     } => {
-                        mouse_captured = true;
-                        state.window().set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                            .or_else(|_e| state.window().set_cursor_grab(winit::window::CursorGrabMode::Locked))
-                            .unwrap();
-                        state.window().set_cursor_visible(false);
+                        if !mouse_captured {
+                            mouse_captured = true;
+                            state.window()
+                                .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                .or_else(|_e| {
+                                    state.window().set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                })
+                                .unwrap();
+                            state.window().set_cursor_visible(false);
+                        }
                     }
                     WindowEvent::CloseRequested => {
                         window_target.exit();
@@ -89,6 +85,7 @@ fn main() {
                         }
                     }
                     WindowEvent::RedrawRequested => {
+                        state.update();
                         state.render().unwrap();
                     }
                     _ => {}
@@ -101,7 +98,6 @@ fn main() {
                 state.scene.process_mouse(delta.0 as f32, delta.1 as f32);
             }
             Event::AboutToWait => {
-                state.update();
                 state.window().request_redraw();
             }
             _ => {}

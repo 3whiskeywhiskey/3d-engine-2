@@ -511,6 +511,7 @@ impl<'a> Renderer<'a> {
 
         // Get the swapchain image to render to
         let image_index = vr.acquire_swapchain_image()?;
+        vr.wait_swapchain_image()?;
 
         // Get view projections for both eyes
         let view_projections = vr.get_view_projections(&frame_state)?;
@@ -590,66 +591,70 @@ impl<'a> Renderer<'a> {
             // Set the VR pipeline
             render_pass.set_pipeline(&vr_pipeline.render_pipeline);
 
-            // Render scene for each eye
-            for (view_index, view_proj) in view_projections.iter().enumerate() {
-                // Update VR uniform buffer with view/projection matrices
-                let vr_uniform = pipeline::VRUniform {
-                    view_proj: (view_proj.projection * view_proj.view).to_cols_array_2d(),
-                    view: view_proj.view.to_cols_array_2d(),
-                    proj: view_proj.projection.to_cols_array_2d(),
-                    eye_position: [
-                        view_proj.pose.position.x,
-                        view_proj.pose.position.y,
-                        view_proj.pose.position.z,
+            // With multiview enabled, we need to provide matrices for both eyes
+            let vr_uniform = pipeline::VRUniform {
+                view: [
+                    view_projections[0].view.to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
+                    view_projections[1].view.to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
+                ],
+                proj: [
+                    view_projections[0].projection.to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
+                    view_projections[1].projection.to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
+                ],
+                view_proj: [
+                    (view_projections[0].projection * view_projections[0].view).to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
+                    (view_projections[1].projection * view_projections[1].view).to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
+                ],
+                eye_position: [
+                    [
+                        view_projections[0].pose.position.x,
+                        view_projections[0].pose.position.y,
+                        view_projections[0].pose.position.z,
                         1.0,
                     ],
-                };
+                    [
+                        view_projections[1].pose.position.x,
+                        view_projections[1].pose.position.y,
+                        view_projections[1].pose.position.z,
+                        1.0,
+                    ],
+                ],
+            };
 
-                self.queue.write_buffer(&vr_pipeline.camera_buffer, 0, bytemuck::cast_slice(&[vr_uniform]));
+            self.queue.write_buffer(&vr_pipeline.camera_buffer, 0, bytemuck::cast_slice(&[vr_uniform]));
 
-                // Set view index for multiview rendering
-                render_pass.set_viewport(
-                    (width as f32 * view_index as f32) / 2.0,
-                    0.0,
-                    width as f32 / 2.0,
-                    height as f32,
-                    0.0,
-                    1.0,
-                );
+            // Set the bind groups in the correct order
+            render_pass.set_bind_group(0, &vr_pipeline.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &vr_pipeline.light_bind_group, &[]);
 
-                // Set the bind groups in the correct order
-                render_pass.set_bind_group(0, &vr_pipeline.camera_bind_group, &[]);
-                render_pass.set_bind_group(1, &vr_pipeline.light_bind_group, &[]);
+            // Render each object
+            for (model, transform) in &scene.objects {
+                let model_uniform = ModelUniform::new(transform.to_matrix());
+                let model_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Model Buffer"),
+                    contents: bytemuck::cast_slice(&[model_uniform]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                });
 
-                // Render each object
-                for (model, transform) in &scene.objects {
-                    let model_uniform = ModelUniform::new(transform.to_matrix());
-                    let model_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Model Buffer"),
-                        contents: bytemuck::cast_slice(&[model_uniform]),
-                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    });
+                let model_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Model Bind Group"),
+                    layout: &vr_pipeline.model_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: model_buffer.as_entire_binding(),
+                        },
+                    ],
+                });
 
-                    let model_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Model Bind Group"),
-                        layout: &vr_pipeline.model_bind_group_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: model_buffer.as_entire_binding(),
-                            },
-                        ],
-                    });
+                render_pass.set_bind_group(2, &model_bind_group, &[]);
 
-                    render_pass.set_bind_group(2, &model_bind_group, &[]);
-
-                    for mesh in &model.meshes {
-                        // Set material bind group
-                        render_pass.set_bind_group(3, &model.materials[mesh.material_index].bind_group, &[]);
-                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                        render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                        render_pass.draw_indexed(0..mesh.num_elements, 0, 0..1);
-                    }
+                for mesh in &model.meshes {
+                    // Set material bind group
+                    render_pass.set_bind_group(3, &model.materials[mesh.material_index].bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..mesh.num_elements, 0, 0..1);
                 }
             }
         }

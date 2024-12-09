@@ -145,7 +145,7 @@ impl VRSystem {
             .enumerate_swapchain_formats()
             .map_err(|err| anyhow::anyhow!("Failed to get swapchain formats: {}", err))?;
 
-        let color_format = TextureFormat::Rgba8UnormSrgb;
+        let color_format = TextureFormat::Bgra8UnormSrgb;
         let color_format_vulkan = wgpu_format_to_vulkan(color_format);
 
         if !swapchain_formats.contains(&color_format_vulkan) {
@@ -204,6 +204,30 @@ impl VRSystem {
     }
 
     pub fn begin_frame(&mut self) -> Result<xr::FrameState> {
+        // Check if session is ready
+        let mut event_storage = xr::EventDataBuffer::new();
+        while let Some(event) = self.instance.poll_event(&mut event_storage)? {
+            match event {
+                xr::Event::SessionStateChanged(state_event) => {
+                    let session_state = state_event.state();
+                    log::info!("Session state changed to: {:?}", session_state);
+                    match session_state {
+                        xr::SessionState::READY => {
+                            self.session.begin(xr::ViewConfigurationType::PRIMARY_STEREO)?;
+                        }
+                        xr::SessionState::STOPPING => {
+                            self.session.end()?;
+                        }
+                        xr::SessionState::EXITING | xr::SessionState::LOSS_PENDING => {
+                            return Err(anyhow::anyhow!("VR session is exiting"));
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+
         let frame_state = self.frame_wait
             .wait()
             .map_err(|err| anyhow::anyhow!("Failed to wait for frame: {}", err))?;
@@ -216,21 +240,24 @@ impl VRSystem {
     }
 
     pub fn acquire_swapchain_image(&mut self) -> Result<u32> {
-        self.swapchain
+        let image_index = self.swapchain
             .acquire_image()
-            .map_err(|err| anyhow::anyhow!("Failed to acquire swapchain image: {}", err))
+            .map_err(|err| anyhow::anyhow!("Failed to acquire swapchain image: {}", err))?;
+        Ok(image_index)
     }
 
     pub fn wait_swapchain_image(&mut self) -> Result<()> {
         self.swapchain
             .wait_image(xr::Duration::INFINITE)
-            .map_err(|err| anyhow::anyhow!("Failed to wait for swapchain image: {}", err))
+            .map_err(|err| anyhow::anyhow!("Failed to wait for swapchain image: {}", err))?;
+        Ok(())
     }
 
     pub fn release_swapchain_image(&mut self) -> Result<()> {
         self.swapchain
             .release_image()
-            .map_err(|err| anyhow::anyhow!("Failed to release swapchain image: {}", err))
+            .map_err(|err| anyhow::anyhow!("Failed to release swapchain image: {}", err))?;
+        Ok(())
     }
 
     pub fn get_view_projections(&mut self, frame_state: &xr::FrameState) -> Result<Vec<ViewProjection>> {
@@ -284,47 +311,56 @@ impl VRSystem {
         self.pipeline.as_ref()
     }
 
-    pub fn submit_frame(
-        &mut self,
-        frame_state: xr::FrameState,
-        view_projections: &[ViewProjection],
-        width: u32,
-        height: u32,
-    ) -> Result<()> {
-        let mut projection_views = Vec::new();
-        for (i, view_proj) in view_projections.iter().enumerate() {
-            projection_views.push(
-                xr::CompositionLayerProjectionView::new()
-                    .pose(view_proj.pose)
-                    .fov(view_proj.fov)
-                    .sub_image(
-                        xr::SwapchainSubImage::new()
-                            .swapchain(&self.swapchain)
-                            .image_array_index(i as u32)
-                            .image_rect(xr::Rect2Di {
-                                offset: xr::Offset2Di { x: 0, y: 0 },
-                                extent: xr::Extent2Di {
-                                    width: width as i32,
-                                    height: height as i32,
-                                },
-                            }),
-                    ),
-            );
-        }
+    pub fn submit_frame(&mut self, frame_state: xr::FrameState, view_projections: &[ViewProjection], width: u32, height: u32) -> Result<()> {
+        // Create projection views
+        let projection_views = [
+            xr::CompositionLayerProjectionView::new()
+                .pose(view_projections[0].pose)
+                .fov(view_projections[0].fov)
+                .sub_image(
+                    xr::SwapchainSubImage::new()
+                        .swapchain(&self.swapchain)
+                        .image_array_index(0)
+                        .image_rect(xr::Rect2Di {
+                            offset: xr::Offset2Di { x: 0, y: 0 },
+                            extent: xr::Extent2Di {
+                                width: width as i32,
+                                height: height as i32,
+                            },
+                        }),
+                ),
+            xr::CompositionLayerProjectionView::new()
+                .pose(view_projections[1].pose)
+                .fov(view_projections[1].fov)
+                .sub_image(
+                    xr::SwapchainSubImage::new()
+                        .swapchain(&self.swapchain)
+                        .image_array_index(1)
+                        .image_rect(xr::Rect2Di {
+                            offset: xr::Offset2Di { x: 0, y: 0 },
+                            extent: xr::Extent2Di {
+                                width: width as i32,
+                                height: height as i32,
+                            },
+                        }),
+                ),
+        ];
 
+        // Create layer for stereo rendering
         let layer = xr::CompositionLayerProjection::new()
-            .space(&self.reference_space)
+            .space(&self.stage_space)
             .views(&projection_views);
 
-        let layers: &[&xr::CompositionLayerBase<xr::Vulkan>] = &[&layer];
-
+        // End frame with the layer
         self.frame_stream
             .end(
                 frame_state.predicted_display_time,
                 xr::EnvironmentBlendMode::OPAQUE,
-                layers,
+                &[&layer],
             )
-            .map_err(|err| anyhow::anyhow!("Failed to end frame: {}", err))
+            .map_err(|err| anyhow::anyhow!("Failed to submit frame: {}", err))?;
+
+        Ok(())
     }
 
     pub fn update(&mut self) -> Result<()> {

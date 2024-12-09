@@ -82,6 +82,8 @@ pub fn create_vulkan_device(
         // Enable Vulkan 1.1 features including multiview
         let mut features_v1_1 = vk::PhysicalDeviceVulkan11Features::default();
         features_v1_1.multiview = vk::TRUE;
+        features_v1_1.multiview_geometry_shader = vk::TRUE;
+        features_v1_1.multiview_tessellation_shader = vk::TRUE;
 
         // Enable base Vulkan features
         let mut features = vk::PhysicalDeviceFeatures2::default();

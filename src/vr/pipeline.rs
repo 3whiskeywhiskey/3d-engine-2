@@ -8,10 +8,10 @@ use crate::renderer::{LightUniform, ModelUniform};
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct VRUniform {
-    pub view_proj: [[f32; 4]; 4],
-    pub view: [[f32; 4]; 4],
-    pub proj: [[f32; 4]; 4],
-    pub eye_position: [f32; 4],
+    pub view: [[f32; 16]; 2],
+    pub proj: [[f32; 16]; 2],
+    pub view_proj: [[f32; 16]; 2],
+    pub eye_position: [[f32; 4]; 2],
 }
 
 pub struct VRPipeline {
@@ -256,7 +256,7 @@ impl VRPipeline {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+                    format: wgpu::TextureFormat::Bgra8UnormSrgb,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -325,7 +325,7 @@ impl VRPipeline {
             view_formats: &[],
         });
 
-        // Create texture view with array layers
+        // Create texture view for multiview rendering
         texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("VR Swapchain View"),
             format: None,

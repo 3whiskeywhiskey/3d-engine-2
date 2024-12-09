@@ -128,9 +128,11 @@ impl<'a> State<'a> {
 
     pub fn update(&mut self) {
         self.scene.update();
-        if let Some(vr) = self.renderer.get_vr_system() {
+        
+        // Update VR system if in VR mode
+        if let renderer::RenderMode::VR(ref mut vr) = self.renderer.mode {
             if let Err(e) = vr.update() {
-                println!("Failed to update VR session state: {}", e);
+                log::error!("Failed to update VR system: {}", e);
             }
         }
     }
