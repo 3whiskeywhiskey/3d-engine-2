@@ -175,14 +175,6 @@ impl VRSystem {
         }
     }
 
-    pub fn end_frame(&mut self, frame_state: xr::FrameState, views: &[xr::CompositionLayerProjectionView<xr::Vulkan>]) -> Result<()> {
-        if let Some(frame_manager) = &mut self.frame_manager {
-            frame_manager.end_frame(frame_state, views)
-        } else {
-            Err(anyhow::anyhow!("Frame manager not initialized"))
-        }
-    }
-
     pub fn is_hmd_available(&self) -> bool {
         // Check if we can get view configuration views (means HMD is connected and available)
         self.instance
@@ -306,5 +298,52 @@ impl VRSystem {
 
     pub fn is_session_running(&self) -> bool {
         matches!(self.session_state, SessionState::Running { .. })
+    }
+
+    pub fn get_swapchain(&self) -> Result<&xr::Swapchain<xr::Vulkan>> {
+        if let Some(frame_manager) = &self.frame_manager {
+            frame_manager.get_swapchain()
+                .ok_or_else(|| anyhow::anyhow!("Swapchain not initialized"))
+        } else {
+            Err(anyhow::anyhow!("Frame manager not initialized"))
+        }
+    }
+
+    pub fn get_swapchain_handle(&self) -> Result<xr::sys::Swapchain> {
+        if let Some(frame_manager) = &self.frame_manager {
+            if let Some(swapchain) = frame_manager.get_swapchain() {
+                Ok(swapchain.as_raw())
+            } else {
+                Err(anyhow::anyhow!("Swapchain not initialized"))
+            }
+        } else {
+            Err(anyhow::anyhow!("Frame manager not initialized"))
+        }
+    }
+
+    pub fn verify_swapchain(&self) -> Result<()> {
+        if let Some(frame_manager) = &self.frame_manager {
+            if frame_manager.get_swapchain().is_some() {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Swapchain not initialized"))
+            }
+        } else {
+            Err(anyhow::anyhow!("Frame manager not initialized"))
+        }
+    }
+
+    pub fn submit_frame(
+        &mut self,
+        frame_state: xr::FrameState,
+        view_projections: &[ViewProjection],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        if let Some(frame_manager) = &mut self.frame_manager {
+            frame_manager.submit_frame(frame_state, view_projections, width, height)
+        } else {
+            Err(anyhow::anyhow!("Frame manager not initialized"))
+        }
     }
 } 

@@ -7,6 +7,7 @@ use wgpu::{
 use crate::{
     Scene,
     vr::system::VRSystem,
+    vr::pipeline,
     model::ModelVertex,
     scene::camera::Camera,
 };
@@ -472,8 +473,141 @@ impl<'a> Renderer<'a> {
         Ok(())
     }
 
-    fn render_vr(&mut self, _scene: &Scene, _vr: &mut VRSystem) -> Result<()> {
-        // VR rendering implementation
+    fn render_vr(&mut self, scene: &Scene, vr: &mut VRSystem) -> Result<()> {
+        // Begin the frame and get frame timing
+        let frame_state = vr.begin_frame()?;
+
+        if !frame_state.should_render {
+            // Skip rendering if not needed
+            return Ok(());
+        }
+
+        // Get the swapchain image to render to
+        let image_index = vr.acquire_swapchain_image()?;
+
+        // Get view projections for both eyes
+        let view_projections = vr.get_view_projections(&frame_state)?;
+
+        // Create command encoder
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("VR Render Encoder"),
+        });
+
+        // Get swapchain image layout
+        let (width, height) = vr.get_swapchain_image_layout()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get swapchain image layout"))?;
+
+        // Get VR pipeline
+        let vr_pipeline = vr.get_pipeline()
+            .ok_or_else(|| anyhow::anyhow!("VR pipeline not initialized"))?;
+
+        // Create array texture view for the swapchain image
+        let swapchain_view = vr_pipeline.create_swapchain_view(&self.device, image_index, width, height)?;
+
+        // Begin render pass
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("VR Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &swapchain_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            // Set the VR pipeline
+            render_pass.set_pipeline(&vr_pipeline.render_pipeline);
+
+            // Render scene for each eye
+            for (view_index, view_proj) in view_projections.iter().enumerate() {
+                // Update VR uniform buffer with view/projection matrices
+                let vr_uniform = pipeline::VRUniform {
+                    view_proj: (view_proj.projection * view_proj.view).to_cols_array_2d(),
+                    view: view_proj.view.to_cols_array_2d(),
+                    proj: view_proj.projection.to_cols_array_2d(),
+                    eye_position: [
+                        view_proj.pose.position.x,
+                        view_proj.pose.position.y,
+                        view_proj.pose.position.z,
+                    ],
+                    _padding: 0,
+                };
+
+                self.queue.write_buffer(&vr_pipeline.uniform_buffer, 0, bytemuck::cast_slice(&[vr_uniform]));
+
+                // Set view index for multiview rendering
+                render_pass.set_viewport(
+                    (width as f32 * view_index as f32) / 2.0,
+                    0.0,
+                    width as f32 / 2.0,
+                    height as f32,
+                    0.0,
+                    1.0,
+                );
+
+                // Set the VR uniform bind group
+                render_pass.set_bind_group(0, &vr_pipeline.uniform_bind_group, &[]);
+                render_pass.set_bind_group(1, &self.light_bind_group, &[]);
+
+                // Render each object
+                for (model, transform) in &scene.objects {
+                    let model_uniform = ModelUniform::new(transform.to_matrix());
+                    let model_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Model Buffer"),
+                        contents: bytemuck::cast_slice(&[model_uniform]),
+                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    });
+
+                    let model_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Model Bind Group"),
+                        layout: &self.model_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: model_buffer.as_entire_binding(),
+                            },
+                        ],
+                    });
+
+                    render_pass.set_bind_group(2, &model_bind_group, &[]);
+
+                    for mesh in &model.meshes {
+                        render_pass.set_bind_group(3, &model.materials[mesh.material_index].bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                        render_pass.draw_indexed(0..mesh.num_elements, 0, 0..1);
+                    }
+                }
+            }
+        }
+
+        // Submit command buffer
+        self.queue.submit(Some(encoder.finish()));
+
+        // Release swapchain image and end frame
+        vr.release_swapchain_image()?;
+
+        // Submit frame with composition layers
+        vr.submit_frame(frame_state, &view_projections, width, height)?;
+
         Ok(())
     }
 } 

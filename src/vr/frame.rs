@@ -85,15 +85,50 @@ impl FrameManager {
         }
     }
 
-    pub fn end_frame(&mut self, frame_state: xr::FrameState, views: &[xr::CompositionLayerProjectionView<xr::Vulkan>]) -> Result<()> {
-        if let (Some(frame_stream), Some(stage)) = (&mut self.frame_stream, &self.stage) {
-            let projection_layer = xr::CompositionLayerProjection::new().space(stage).views(views);
-            frame_stream.end(
-                frame_state.predicted_display_time,
-                xr::EnvironmentBlendMode::OPAQUE,
-                &[&projection_layer],
-            )?;
-            Ok(())
+    pub fn submit_frame(
+        &mut self,
+        frame_state: xr::FrameState,
+        view_projections: &[ViewProjection],
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        let swapchain = self.swapchain.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Swapchain not initialized"))?;
+
+        // Create composition layer views
+        let mut views = Vec::with_capacity(view_projections.len());
+        for (i, view_proj) in view_projections.iter().enumerate() {
+            let view = xr::CompositionLayerProjectionView::new()
+                .pose(view_proj.pose)
+                .fov(view_proj.fov)
+                .sub_image(
+                    xr::SwapchainSubImage::new()
+                        .swapchain(swapchain)
+                        .image_array_index(i as u32)
+                        .image_rect(xr::Rect2Di {
+                            offset: xr::Offset2Di { x: 0, y: 0 },
+                            extent: xr::Extent2Di {
+                                width: width as i32,
+                                height: height as i32,
+                            },
+                        }),
+                );
+            views.push(view);
+        }
+
+        // End frame with composition layers
+        if let Some(frame_stream) = &mut self.frame_stream {
+            if let Some(stage) = &self.stage {
+                let projection_layer = xr::CompositionLayerProjection::new().space(stage).views(&views);
+                frame_stream.end(
+                    frame_state.predicted_display_time,
+                    xr::EnvironmentBlendMode::OPAQUE,
+                    &[&projection_layer],
+                )?;
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Stage not initialized"))
+            }
         } else {
             Err(anyhow::anyhow!("Frame stream not initialized"))
         }
@@ -160,11 +195,16 @@ impl FrameManager {
             _ => None,
         }
     }
+
+    pub fn get_swapchain(&self) -> Option<&xr::Swapchain<xr::Vulkan>> {
+        self.swapchain.as_ref()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openxr as xr;
 
     #[test]
     fn test_frame_manager_new() {
@@ -175,5 +215,68 @@ mod tests {
         assert!(frame_manager.stage.is_none());
         assert!(frame_manager.session.is_none());
         assert!(frame_manager.views.is_none());
+    }
+
+    #[test]
+    fn test_view_projection_creation() {
+        // Create mock views
+        let views = vec![
+            xr::View {
+                pose: xr::Posef {
+                    orientation: xr::Quaternionf {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                        w: 1.0,
+                    },
+                    position: xr::Vector3f {
+                        x: -0.032, // IPD offset for left eye
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                },
+                fov: xr::Fovf {
+                    angle_left: -1.0,
+                    angle_right: 1.0,
+                    angle_up: 1.0,
+                    angle_down: -1.0,
+                },
+            },
+            xr::View {
+                pose: xr::Posef {
+                    orientation: xr::Quaternionf {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                        w: 1.0,
+                    },
+                    position: xr::Vector3f {
+                        x: 0.032, // IPD offset for right eye
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                },
+                fov: xr::Fovf {
+                    angle_left: -1.0,
+                    angle_right: 1.0,
+                    angle_up: 1.0,
+                    angle_down: -1.0,
+                },
+            },
+        ];
+
+        // Test view projection creation
+        let view_projections: Vec<ViewProjection> = views.iter()
+            .map(|view| ViewProjection::from_xr_view(view, 0.1))
+            .collect();
+
+        // Verify view projections
+        assert_eq!(view_projections.len(), 2);
+        
+        // Check that the view matrices are different for each eye
+        assert_ne!(view_projections[0].view, view_projections[1].view);
+        
+        // Check that the projection matrices are symmetric
+        assert_eq!(view_projections[0].projection, view_projections[1].projection);
     }
 } 

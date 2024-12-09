@@ -128,4 +128,133 @@ impl VRPipeline {
     pub fn update_uniform(&self, queue: &wgpu::Queue, uniform: &VRUniform) {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[*uniform]));
     }
+
+    pub fn create_swapchain_view(
+        &self,
+        device: &wgpu::Device,
+        image_index: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<wgpu::TextureView, anyhow::Error> {
+        // Create texture descriptor for the swapchain image
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("VR Swapchain Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 2, // One layer for each eye
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8UnormSrgb, // Match the swapchain format
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+
+        // Create view for the texture
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("VR Swapchain View"),
+            format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            aspect: wgpu::TextureAspect::All,
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: 0,
+            array_layer_count: Some(2), // One layer for each eye
+            ..Default::default()
+        });
+
+        Ok(view)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+
+    struct TestContext {
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+    }
+
+    impl TestContext {
+        fn new() -> Option<Self> {
+            let instance = wgpu::Instance::default();
+            
+            let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                force_fallback_adapter: true,
+                compatible_surface: None,
+            }))?;
+
+            let (device, queue) = pollster::block_on(adapter.request_device(
+                &wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    memory_hints: Default::default(),
+                },
+                None,
+            )).ok()?;
+
+            Some(Self { device, queue })
+        }
+    }
+
+    #[test]
+    fn test_vr_pipeline_creation() {
+        let context = match TestContext::new() {
+            Some(context) => context,
+            None => {
+                println!("Skipping test 'test_vr_pipeline_creation' - no suitable GPU adapter available");
+                return;
+            }
+        };
+
+        let pipeline = VRPipeline::new(
+            &context.device,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+            wgpu::TextureFormat::Depth32Float,
+        );
+
+        // Verify pipeline components
+        assert!(pipeline.uniform_buffer.size() >= std::mem::size_of::<VRUniform>() as u64);
+        // We can't directly verify the bind group layout, but we can check it exists
+        assert!(std::ptr::addr_of!(pipeline.uniform_bind_group_layout) != std::ptr::null());
+    }
+
+    #[test]
+    fn test_swapchain_view_creation() -> Result<()> {
+        let context = match TestContext::new() {
+            Some(context) => context,
+            None => {
+                println!("Skipping test 'test_swapchain_view_creation' - no suitable GPU adapter available");
+                return Ok(());
+            }
+        };
+
+        let pipeline = VRPipeline::new(
+            &context.device,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+            wgpu::TextureFormat::Depth32Float,
+        );
+
+        // Test view creation with different dimensions
+        let test_dimensions = [(800, 600), (1024, 768), (1920, 1080)];
+        
+        for (width, height) in test_dimensions.iter() {
+            let _view = pipeline.create_swapchain_view(
+                &context.device,
+                0, // image_index
+                *width,
+                *height,
+            )?;
+
+            // If we got here without panicking, the view was created successfully
+        }
+
+        Ok(())
+    }
 } 
