@@ -8,9 +8,9 @@ use crate::renderer::{LightUniform, ModelUniform};
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct VRUniform {
-    pub view: [[f32; 16]; 2],
-    pub proj: [[f32; 16]; 2],
-    pub view_proj: [[f32; 16]; 2],
+    pub view: [[[f32; 4]; 4]; 2],
+    pub proj: [[[f32; 4]; 4]; 2],
+    pub view_proj: [[[f32; 4]; 4]; 2],
     pub eye_position: [[f32; 4]; 2],
 }
 
@@ -338,18 +338,19 @@ impl VRPipeline {
         })
     }
 
-    pub fn create_depth_texture(
+    pub fn create_depth_view(
         &self,
         device: &wgpu::Device,
         width: u32,
         height: u32,
     ) -> wgpu::TextureView {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        // Create depth texture
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("VR Depth Texture"),
             size: wgpu::Extent3d {
                 width,
                 height,
-                depth_or_array_layers: 2, // One layer for each eye
+                depth_or_array_layers: 2,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -359,7 +360,8 @@ impl VRPipeline {
             view_formats: &[],
         });
 
-        texture.create_view(&wgpu::TextureViewDescriptor {
+        // Create depth view for multiview rendering
+        depth_texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("VR Depth View"),
             format: None,
             dimension: Some(wgpu::TextureViewDimension::D2Array),

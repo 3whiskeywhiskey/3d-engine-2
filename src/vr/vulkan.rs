@@ -32,8 +32,16 @@ pub fn create_vulkan_instance(
         let mut app_info = vk::ApplicationInfo::default();
         app_info.api_version = vk::make_api_version(0, 1, 2, 0);
 
+        // Enable required extensions
+        let extensions = [
+            vk::KhrMultiviewFn::name().as_ptr(),
+            vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr(),
+        ];
+
         let mut create_info = vk::InstanceCreateInfo::default();
         create_info.p_application_info = &app_info;
+        create_info.enabled_extension_count = extensions.len() as u32;
+        create_info.pp_enabled_extension_names = extensions.as_ptr();
 
         let get_instance_proc_addr = transmute::<vk::PFN_vkGetInstanceProcAddr, unsafe extern "system" fn(*const c_void, *const i8) -> Option<unsafe extern "system" fn()>>(get_instance_proc_addr);
 
@@ -82,8 +90,6 @@ pub fn create_vulkan_device(
         // Enable Vulkan 1.1 features including multiview
         let mut features_v1_1 = vk::PhysicalDeviceVulkan11Features::default();
         features_v1_1.multiview = vk::TRUE;
-        features_v1_1.multiview_geometry_shader = vk::TRUE;
-        features_v1_1.multiview_tessellation_shader = vk::TRUE;
 
         // Enable base Vulkan features
         let mut features = vk::PhysicalDeviceFeatures2::default();

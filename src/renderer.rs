@@ -525,39 +525,13 @@ impl<'a> Renderer<'a> {
         let (width, height) = vr.get_swapchain_image_layout()
             .ok_or_else(|| anyhow::anyhow!("Failed to get swapchain image layout"))?;
 
-        // Resize depth texture to match swapchain dimensions
-        self.depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("VR Depth Texture"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 2,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-
-        let depth_view = self.depth_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("VR Depth View"),
-            format: None,
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            aspect: wgpu::TextureAspect::DepthOnly,
-            base_mip_level: 0,
-            mip_level_count: None,
-            base_array_layer: 0,
-            array_layer_count: Some(2),
-        });
-
         // Get VR pipeline
         let vr_pipeline = vr.get_pipeline()
             .ok_or_else(|| anyhow::anyhow!("VR pipeline not initialized"))?;
 
-        // Create swapchain view
+        // Create swapchain view and depth view
         let swapchain_view = vr_pipeline.create_swapchain_view(&self.device, width, height);
+        let depth_view = vr_pipeline.create_depth_view(&self.device, width, height);
 
         // Begin render pass
         {
@@ -594,16 +568,16 @@ impl<'a> Renderer<'a> {
             // With multiview enabled, we need to provide matrices for both eyes
             let vr_uniform = pipeline::VRUniform {
                 view: [
-                    view_projections[0].view.to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
-                    view_projections[1].view.to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
+                    view_projections[0].view.to_cols_array_2d(),
+                    view_projections[1].view.to_cols_array_2d(),
                 ],
                 proj: [
-                    view_projections[0].projection.to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
-                    view_projections[1].projection.to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
+                    view_projections[0].projection.to_cols_array_2d(),
+                    view_projections[1].projection.to_cols_array_2d(),
                 ],
                 view_proj: [
-                    (view_projections[0].projection * view_projections[0].view).to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
-                    (view_projections[1].projection * view_projections[1].view).to_cols_array_2d().into_iter().flatten().collect::<Vec<_>>().try_into().unwrap(),
+                    (view_projections[0].projection * view_projections[0].view).to_cols_array_2d(),
+                    (view_projections[1].projection * view_projections[1].view).to_cols_array_2d(),
                 ],
                 eye_position: [
                     [
