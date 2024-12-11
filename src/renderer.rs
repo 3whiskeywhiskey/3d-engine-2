@@ -603,6 +603,14 @@ impl<'a> Renderer<'a> {
                 ],
             };
 
+            log::warn!("VR View Matrices:");
+            log::warn!("Left Eye Position: {:?}", view_projections[0].pose.position);
+            log::warn!("Right Eye Position: {:?}", view_projections[1].pose.position);
+            log::warn!("Left Eye View Matrix: {:?}", view_projections[0].view);
+            log::warn!("Right Eye View Matrix: {:?}", view_projections[1].view);
+            log::warn!("Left Eye Projection Matrix: {:?}", view_projections[0].projection);
+            log::warn!("Right Eye Projection Matrix: {:?}", view_projections[1].projection);
+
             self.queue.write_buffer(&vr_pipeline.camera_buffer, 0, bytemuck::cast_slice(&[vr_uniform]));
 
             // Set the bind groups in the correct order
@@ -611,6 +619,7 @@ impl<'a> Renderer<'a> {
 
             // Render each object
             for (model, transform) in &scene.objects {
+                // log::warn!("Rendering object with transform: {:?}", transform);
                 let model_uniform = ModelUniform::new(transform.to_matrix());
                 let model_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Model Buffer"),
@@ -632,6 +641,7 @@ impl<'a> Renderer<'a> {
                 render_pass.set_bind_group(2, &model_bind_group, &[]);
 
                 for mesh in &model.meshes {
+                    log::warn!("  Rendering mesh with {} vertices, {} indices", mesh.num_elements, mesh.num_elements);
                     // Set material bind group
                     render_pass.set_bind_group(3, &model.materials[mesh.material_index].bind_group, &[]);
                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));

@@ -44,7 +44,8 @@ impl<'a> State<'a> {
                 label: Some("Primary Device"),
                 required_features: wgpu::Features::MULTIVIEW 
                     | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                    | wgpu::Features::PUSH_CONSTANTS,
+                    | wgpu::Features::PUSH_CONSTANTS
+                    | wgpu::Features::SPIRV_SHADER_PASSTHROUGH,
                 required_limits: wgpu::Limits {
                     max_push_constant_size: 128,
                     max_texture_array_layers: 32,  // Required for multiview

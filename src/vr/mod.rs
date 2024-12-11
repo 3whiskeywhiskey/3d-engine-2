@@ -1,4 +1,5 @@
 pub mod pipeline;
+pub mod shader_utils;
 pub mod math;
 pub mod vulkan;
 pub mod system;

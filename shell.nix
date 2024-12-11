@@ -6,6 +6,16 @@ pkgs.mkShell {
     # Basic build tools
     pkg-config
     cmake
+
+    alsaLib.dev
+    openssl
+
+    pkg-config
+    eudev
+    util-linux
+    
+    python3
+
     
     # X11 dependencies
     xorg.libX11
@@ -28,6 +38,10 @@ pkgs.mkShell {
     mesa
     libGL
     nvidia-vaapi-driver
+    shaderc  # Shader compiler
+
+    # monado XR runtime, alternative to steam-vr
+    monado
     
     # OpenXR dependencies
     openxr-loader
@@ -57,20 +71,28 @@ pkgs.mkShell {
       pkgs.mesa
       pkgs.libGL
       pkgs.openxr-loader
+      pkgs.shaderc
     ]}"
+
+    export DISPLAY=:0
     
     # Vulkan configuration
     export VK_LAYER_PATH="${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d"
     export VK_ICD_FILENAMES="/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.x86_64.json"
     
     # OpenXR configuration - Use SteamVR's runtime
-    export XR_RUNTIME_JSON="/home/whiskey/.local/share/Steam/steamapps/common/SteamVR/steamxr_linux64.json"
+    # export XR_RUNTIME_JSON="/home/whiskey/.local/share/Steam/steamapps/common/SteamVR/steamxr_linux64.json"
+    # or monado's
+    export XR_RUNTIME_JSON=${pkgs.monado}/share/openxr/1/openxr_monado.json
+
+    echo "XR_RUNTIME_JSON set to $XR_RUNTIME_JSON"
+    echo "XRT_LOG_LEVEL set to $XRT_LOG_LEVEL"
     
     # Debug settings
-    export RUST_LOG="wgpu=trace,vulkan=trace,winit=trace,openxr=trace"
+    #export RUST_LOG="wgpu=trace,vulkan=trace,winit=trace,openxr=trace"
+    export RUST_LOG="warn"
     export RUST_BACKTRACE="full"
-    export VK_LOADER_DEBUG=all
-    export LIBGL_DEBUG=verbose
+    #export LIBGL_DEBUG=verbose
     export WINIT_UNIX_BACKEND=x11
     
     # NVIDIA specific
@@ -79,6 +101,13 @@ pkgs.mkShell {
     export __GLX_VENDOR_LIBRARY_NAME=nvidia
     
     # Reduce Vulkan logging
-    export VK_LOADER_DEBUG=none
+    #export VK_LOADER_DEBUG=none
+
+    # Force shaderc-sys to build from source
+    export CARGO_FEATURE_BUILD_FROM_SOURCE=1
+
+    echo "Starting Monado service in the background..."
+    nohup monado-service > monado-service-log.txt 2>&1 &
+    sleep 5  # Wait for the service to start
   '';
 } 

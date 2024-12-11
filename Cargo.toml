@@ -2,6 +2,7 @@
 name = "wgpu-3d-viewer"
 version = "0.1.0"
 edition = "2021"
+default-run = "wgpu-3d-viewer"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -9,6 +10,10 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "wgpu-3d-viewer"
 path = "src/main.rs"
+
+[[bin]]
+name = "vr-poc"
+path = "vr-poc/src/main.rs"
 
 [dependencies]
 wgpu = "23.0.1"
@@ -27,7 +32,10 @@ base64 = "0.21"
 approx = "0.5.1"
 openxr = { version = "0.17", features = ["linked"] }
 clap = { version = "4.4", features = ["derive"] }
-ash = "0.37"
+ash = { version = "0.37", features = ["linked"] }
+ash-window = "0.12"
+gpu-allocator = { version = "0.22", default-features = false, features = ["vulkan"] }
+shaderc = "0.8"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"

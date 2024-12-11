@@ -2,6 +2,8 @@ use wgpu;
 use crate::model::ModelVertex;
 use std::num::NonZeroU32;
 use crate::renderer::{LightUniform, ModelUniform};
+use shaderc::ShaderKind;
+use super::shader_utils;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -234,25 +236,47 @@ impl VRPipeline {
             push_constant_ranges: &[],
         });
 
-        // Create shader module
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("VR Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/vr.wgsl").into()),
-        });
+        // Load pre-compiled SPIR-V shaders
+        let vertex_spirv = shader_utils::compile_wgsl_to_spirv(
+            "",  // Not used anymore since we're loading from file
+            ShaderKind::Vertex,
+            "main"
+        ).expect("Failed to load vertex shader");
+
+        let fragment_spirv = shader_utils::compile_wgsl_to_spirv(
+            "",  // Not used anymore since we're loading from file
+            ShaderKind::Fragment,
+            "main"
+        ).expect("Failed to load fragment shader");
+
+        // Create shader modules from SPIR-V
+        let vertex_shader = unsafe {
+            device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
+                label: Some("VR Vertex Shader"),
+                source: std::borrow::Cow::Borrowed(&vertex_spirv),
+            })
+        };
+
+        let fragment_shader = unsafe {
+            device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
+                label: Some("VR Fragment Shader"),
+                source: std::borrow::Cow::Borrowed(&fragment_spirv),
+            })
+        };
 
         // Create render pipeline
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("VR Render Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
+                module: &vertex_shader,
+                entry_point: Some("main"),
                 buffers: &[ModelVertex::desc()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
+                module: &fragment_shader,
+                entry_point: Some("main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: wgpu::TextureFormat::Bgra8UnormSrgb,
                     blend: Some(wgpu::BlendState::REPLACE),
